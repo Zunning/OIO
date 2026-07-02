@@ -236,6 +236,30 @@ label {
   align-items: center;
 }
 
+.segmented {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.segmented button {
+  background: white;
+  color: var(--ink);
+  border-color: var(--line);
+}
+
+.segmented button.active {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
+.prompt-preview {
+  min-height: 520px;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 13px;
+}
+
 .chips {
   display: flex;
   flex-wrap: wrap;

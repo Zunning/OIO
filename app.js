@@ -16,6 +16,9 @@ const initialState = {
   reviewChecked: false,
   reviewCorrect: false,
   showSourceText: false,
+  promptStyle: "dialogue",
+  promptDraft: "",
+  promptCopied: "",
   modal: null,
   search: "",
 };
@@ -34,7 +37,7 @@ function loadState() {
 }
 
 function persist() {
-  const { route, selectedTextId, selectedChunkId, reviewQueue, reviewIndex, showAnswer, reviewInput, reviewChecked, reviewCorrect, showSourceText, modal, search, ...data } = state;
+  const { route, selectedTextId, selectedChunkId, reviewQueue, reviewIndex, showAnswer, reviewInput, reviewChecked, reviewCorrect, showSourceText, promptStyle, promptDraft, promptCopied, modal, search, ...data } = state;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
 }
 
@@ -72,7 +75,7 @@ function formatPlainDate(value) {
 }
 
 function splitTags(value) {
-  return value
+  return String(value || "")
     .split(/[，,\s]+/)
     .map((tag) => tag.trim())
     .filter(Boolean);
@@ -85,6 +88,186 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+const PROMPT_TEMPLATES = {
+  dialogue: {
+    label: "Dialogue",
+    text: `You're my good British friend helping me express myself naturally in English.
+
+No matter what language I use, rewrite my message based on the intended meaning, not the original wording. Make it sound natural, native, and conversational. Preserve my emotional tone. Do not summarize. It should sound like something I would actually say.
+
+Also provide a conversational Chinese translation of the original message.
+
+Output must follow this exact format:
+
+:::OIO
+title: Generate a short Chinese title, no more than 12 characters.
+tags: Generate 2-4 short tags in English, separated by commas.
+style: dialogue
+
+original:
+Paste my original message here exactly.
+
+rewrite:
+Write one natural English paragraph here. No line breaks.
+
+translation:
+Write one conversational Chinese paragraph here. No line breaks.
+:::
+
+Do not include any extra explanations outside the :::OIO block.`,
+  },
+  writing: {
+    label: "Writing",
+    text: `You're my thoughtful British English writing coach.
+
+No matter what language I use, rewrite my message into natural, polished English based on the intended meaning, not the original wording. Preserve my emotional tone and personal voice. Do not summarize. Make it suitable for written communication, but not stiff or overly formal.
+
+Also provide a conversational Chinese translation of the original message.
+
+Output must follow this exact format:
+
+:::OIO
+title: Generate a short Chinese title, no more than 12 characters.
+tags: Generate 2-4 short tags in English, separated by commas.
+style: writing
+
+original:
+Paste my original message here exactly.
+
+rewrite:
+Write one polished English paragraph here. No line breaks.
+
+translation:
+Write one conversational Chinese paragraph here. No line breaks.
+:::
+
+Do not include any extra explanations outside the :::OIO block.`,
+  },
+  work: {
+    label: "Work",
+    text: `You're my British English communication coach for work situations.
+
+No matter what language I use, rewrite my message into clear, natural, professional English based on the intended meaning, not the original wording. Preserve the emotional tone, but make it suitable for workplace communication. Do not summarize. Avoid sounding robotic or overly formal.
+
+Also provide a conversational Chinese translation of the original message.
+
+Output must follow this exact format:
+
+:::OIO
+title: Generate a short Chinese title, no more than 12 characters.
+tags: Generate 2-4 short tags in English, separated by commas.
+style: work
+
+original:
+Paste my original message here exactly.
+
+rewrite:
+Write one professional English paragraph here. No line breaks.
+
+translation:
+Write one conversational Chinese paragraph here. No line breaks.
+:::
+
+Do not include any extra explanations outside the :::OIO block.`,
+  },
+  casual: {
+    label: "Casual",
+    text: `You're my funny, warm British friend.
+
+No matter what language I use, rewrite my message into casual, natural English based on the intended meaning, not the original wording. Preserve the emotional tone. Make it sound friendly, relaxed, and native, with a little humor if it fits. Do not summarize.
+
+Also provide a conversational Chinese translation of the original message.
+
+Output must follow this exact format:
+
+:::OIO
+title: Generate a short Chinese title, no more than 12 characters.
+tags: Generate 2-4 short tags in English, separated by commas.
+style: casual
+
+original:
+Paste my original message here exactly.
+
+rewrite:
+Write one casual English paragraph here. No line breaks.
+
+translation:
+Write one conversational Chinese paragraph here. No line breaks.
+:::
+
+Do not include any extra explanations outside the :::OIO block.`,
+  },
+  story: {
+    label: "Story",
+    text: `You're my British English storytelling friend.
+
+No matter what language I use, rewrite my message into natural English as a short story or vivid personal narrative based on the intended meaning, not the original wording. Preserve my emotional tone, details, and point of view. Do not summarize.
+
+Also provide a conversational Chinese translation of the original message.
+
+Output must follow this exact format:
+
+:::OIO
+title: Generate a short Chinese title, no more than 12 characters.
+tags: Generate 2-4 short tags in English, separated by commas.
+style: story
+
+original:
+Paste my original message here exactly.
+
+rewrite:
+Write one natural English paragraph here. No line breaks.
+
+translation:
+Write one conversational Chinese paragraph here. No line breaks.
+:::
+
+Do not include any extra explanations outside the :::OIO block.`,
+  },
+};
+
+function promptFor(style, original = "") {
+  const template = PROMPT_TEMPLATES[style] || PROMPT_TEMPLATES.dialogue;
+  if (!original.trim()) return template.text;
+  return `${template.text}\n\nMy original message:\n${original.trim()}`;
+}
+
+function parseOioBlock(value) {
+  const match = String(value || "").match(/:::OIO\s*([\s\S]*?)\s*:::/i);
+  if (!match) return null;
+  const body = match[1].trim();
+  const title = (body.match(/^title:\s*(.*)$/im)?.[1] || "").trim();
+  const tags = (body.match(/^tags:\s*(.*)$/im)?.[1] || "").trim();
+  const style = (body.match(/^style:\s*(.*)$/im)?.[1] || "dialogue").trim();
+  const readBlock = (name) => {
+    const blockMatch = body.match(new RegExp(`^${name}:\\s*\\n([\\s\\S]*?)(?=\\n\\w+:\\s*\\n|$)`, "im"));
+    return (blockMatch?.[1] || "").trim();
+  };
+
+  return {
+    title,
+    tags: splitTags(tags),
+    style,
+    original: readBlock("original"),
+    rewrite: readBlock("rewrite"),
+    translation: readBlock("translation"),
+  };
+}
+
+async function copyText(value) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return true;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  document.body.appendChild(textarea);
+  textarea.select();
+  const ok = document.execCommand("copy");
+  textarea.remove();
+  return ok;
 }
 
 function sentenceFor(text, selected) {
@@ -216,6 +399,7 @@ function routeTo(route, extra = {}) {
 function appShell(content) {
   const nav = [
     ["home", "□", "文本"],
+    ["prompts", "✎", "Prompts"],
     ["chunks", "◇", "Chunks"],
     ["cards", "◧", "卡片"],
     ["review", "▷", "复习"],
@@ -290,6 +474,53 @@ function renderHome() {
   `;
 }
 
+function renderPrompts() {
+  const style = state.promptStyle || "dialogue";
+  const promptText = promptFor(style, state.promptDraft || "");
+
+  return `
+    <div class="topbar">
+      <div>
+        <h2>Prompts</h2>
+        <div class="subtle">手动复制到 ChatGPT，再把 OIO 格式结果粘回来解析。</div>
+      </div>
+      <div class="toolbar">
+        <button data-copy-prompt="plain">复制提示词</button>
+        <button class="secondary" data-open-chatgpt>打开 ChatGPT</button>
+      </div>
+    </div>
+
+    <div class="grid two">
+      <section class="panel">
+        <h3>风格</h3>
+        <div class="segmented">
+          ${Object.entries(PROMPT_TEMPLATES)
+            .map(
+              ([key, item]) => `
+                <button class="${style === key ? "active" : ""}" data-prompt-style="${key}">${item.label}</button>
+              `,
+            )
+            .join("")}
+        </div>
+        <label style="margin-top: 14px;">
+          原始输入，可选
+          <textarea id="promptDraft" placeholder="把你想表达的话放这里，然后复制提示词 + 原始输入">${escapeHtml(state.promptDraft || "")}</textarea>
+        </label>
+        <div class="toolbar" style="margin-top: 12px;">
+          <button data-copy-prompt="withInput">复制提示词 + 原始输入</button>
+          <button class="secondary" data-open-modal="text">新建文本</button>
+        </div>
+        ${state.promptCopied ? `<p class="subtle">${escapeHtml(state.promptCopied)}</p>` : ""}
+      </section>
+
+      <section class="panel">
+        <h3>提示词预览</h3>
+        <textarea class="prompt-preview" readonly>${escapeHtml(promptText)}</textarea>
+      </section>
+    </div>
+  `;
+}
+
 function renderTextItem(item) {
   const chunkCount = chunksForText(item.id).length;
   const cardCount = cardsForText(item.id).length;
@@ -339,6 +570,14 @@ function renderTextDetail() {
     <div class="split">
       <section>
         <div id="reader" class="reader">${renderHighlightedText(text)}</div>
+        ${
+          text.translation
+            ? `<div class="muted-box" style="margin-top: 14px;">
+                <p class="subtle">中文翻译</p>
+                <p>${escapeHtml(text.translation)}</p>
+              </div>`
+            : ""
+        }
       </section>
       <aside class="grid">
         ${
@@ -628,22 +867,51 @@ function renderModal() {
 
 function renderTextModal() {
   const item = state.modal.id ? state.texts.find((text) => text.id === state.modal.id) : null;
+  const modalPromptStyle = state.modal.promptStyle || item?.textType || state.promptStyle || "dialogue";
+  const modalOriginal = state.modal.originalText ?? item?.originalText ?? "";
   return `
     <div class="modal">
       <form class="modal-box" id="textForm">
         <h3>${item ? "编辑文本" : "新建文本"}</h3>
         <div class="grid">
+          <div class="muted-box">
+            <div class="section-head">
+              <div>
+                <strong>手动 AI 工作流</strong>
+                <p class="subtle">复制提示词到 ChatGPT，再把 :::OIO 结果粘回来自动解析。</p>
+              </div>
+              <button type="button" class="secondary small" data-open-chatgpt>打开 ChatGPT</button>
+            </div>
+            <div class="grid two" style="margin-top: 12px;">
+              <label>提示词风格
+                <select id="modalPromptStyle">
+                  ${Object.entries(PROMPT_TEMPLATES)
+                    .map(([key, prompt]) => `<option value="${key}" ${modalPromptStyle === key ? "selected" : ""}>${prompt.label}</option>`)
+                    .join("")}
+                </select>
+              </label>
+              <label>AI 输出
+                <textarea id="aiOutputPaste" placeholder="把 ChatGPT 输出的 :::OIO ... ::: 粘贴到这里"></textarea>
+              </label>
+            </div>
+            <div class="toolbar" style="margin-top: 12px;">
+              <button type="button" data-copy-modal-prompt>复制提示词 + 原始输入</button>
+              <button type="button" class="secondary" data-parse-ai-output>自动解析</button>
+            </div>
+            ${state.modal.parseMessage ? `<p class="subtle">${escapeHtml(state.modal.parseMessage)}</p>` : ""}
+          </div>
           <label>标题<input name="title" required value="${escapeHtml(item?.title || "")}" /></label>
           <label>文本类型
             <select name="textType">
-              ${["story", "expression_set", "dialogue", "writing", "other"]
-                .map((type) => `<option value="${type}" ${(item?.textType || "dialogue") === type ? "selected" : ""}>${type}</option>`)
+              ${["story", "expression_set", "dialogue", "writing", "work", "casual", "other"]
+                .map((type) => `<option value="${type}" ${(item?.textType || modalPromptStyle || "dialogue") === type ? "selected" : ""}>${type}</option>`)
                 .join("")}
             </select>
           </label>
           <label>日期<input type="date" name="sourceDate" value="${escapeHtml(item?.sourceDate || todayDate())}" /></label>
-          <label>原始输入，可选<textarea name="originalText">${escapeHtml(item?.originalText || "")}</textarea></label>
+          <label>原始输入，可选<textarea name="originalText">${escapeHtml(modalOriginal)}</textarea></label>
           <label>英文改写，必填<textarea name="rewrittenText" required>${escapeHtml(item?.rewrittenText || "")}</textarea></label>
+          <label>中文翻译<textarea name="translation">${escapeHtml(item?.translation || "")}</textarea></label>
           <label>备注<textarea name="note">${escapeHtml(item?.note || "")}</textarea></label>
           <label>标签<input name="tags" value="${escapeHtml(item?.tags?.join(", ") || "")}" placeholder="daily, speaking" /></label>
           <div class="toolbar">
@@ -760,6 +1028,7 @@ function renderClozeModal() {
 function render() {
   let content = "";
   if (state.route === "home") content = renderHome();
+  if (state.route === "prompts") content = renderPrompts();
   if (state.route === "text") content = renderTextDetail();
   if (state.route === "chunks") content = renderChunks();
   if (state.route === "cards") content = renderCards();
@@ -768,10 +1037,16 @@ function render() {
 }
 
 document.addEventListener("click", (event) => {
-  const target = event.target.closest("[data-route], [data-open-modal], [data-close-modal], [data-view-text], [data-edit-text], [data-delete-text], [data-create-chunk], [data-open-cloze], [data-token-index], [data-delete-chunk], [data-delete-card], [data-start-review], [data-rate], [data-stop-review], [data-save-source-intent], [data-finish-source-intents], [data-toggle-source-text], [data-open-source-intents]");
+  const target = event.target.closest("[data-route], [data-open-modal], [data-close-modal], [data-view-text], [data-edit-text], [data-delete-text], [data-create-chunk], [data-open-cloze], [data-token-index], [data-delete-chunk], [data-delete-card], [data-start-review], [data-rate], [data-stop-review], [data-save-source-intent], [data-finish-source-intents], [data-toggle-source-text], [data-open-source-intents], [data-prompt-style], [data-copy-prompt], [data-open-chatgpt], [data-copy-modal-prompt], [data-parse-ai-output]");
   if (!target) return;
 
   if (target.dataset.route) routeTo(target.dataset.route);
+
+  if (target.dataset.promptStyle) setState({ promptStyle: target.dataset.promptStyle, promptCopied: "" });
+
+  if (target.dataset.copyPrompt) copyPrompt(target.dataset.copyPrompt);
+
+  if (target.dataset.openChatgpt !== undefined) window.open("https://chatgpt.com/", "_blank");
 
   if (target.dataset.openModal === "text") setState({ modal: { type: "text" } });
 
@@ -806,10 +1081,20 @@ document.addEventListener("click", (event) => {
   if (target.dataset.finishSourceIntents) setState({ modal: null, route: "text", selectedTextId: target.dataset.finishSourceIntents });
 
   if (target.dataset.toggleSourceText !== undefined) setState({ showSourceText: !state.showSourceText });
+
+  if (target.dataset.copyModalPrompt !== undefined) copyModalPrompt();
+
+  if (target.dataset.parseAiOutput !== undefined) parseAiOutputIntoTextForm();
 });
 
 document.addEventListener("input", (event) => {
   if (event.target.id === "searchInput") setState({ search: event.target.value });
+  if (event.target.id === "promptDraft") {
+    state = { ...state, promptDraft: event.target.value, promptCopied: "" };
+  }
+  if (event.target.id === "modalPromptStyle") {
+    state = { ...state, modal: { ...state.modal, promptStyle: event.target.value, parseMessage: "" } };
+  }
   if (event.target.id === "reviewInput") {
     state = { ...state, reviewInput: event.target.value };
   }
@@ -850,6 +1135,53 @@ document.addEventListener("keydown", (event) => {
   createChunkFromSelection(state.selectedTextId);
 });
 
+function fillTextForm(parsed) {
+  const form = document.querySelector("#textForm");
+  if (!form || !parsed) return;
+  form.elements.title.value = parsed.title || form.elements.title.value;
+  form.elements.originalText.value = parsed.original || form.elements.originalText.value;
+  form.elements.rewrittenText.value = parsed.rewrite || form.elements.rewrittenText.value;
+  form.elements.translation.value = parsed.translation || form.elements.translation.value;
+  form.elements.note.value = parsed.translation || form.elements.note.value;
+  form.elements.tags.value = parsed.tags?.join(", ") || form.elements.tags.value;
+  if (parsed.style && form.elements.textType.querySelector(`option[value="${parsed.style}"]`)) {
+    form.elements.textType.value = parsed.style;
+  }
+}
+
+async function copyPrompt(mode) {
+  const text = mode === "withInput" ? promptFor(state.promptStyle, state.promptDraft || "") : promptFor(state.promptStyle, "");
+  try {
+    await copyText(text);
+    setState({ promptCopied: "已复制。去 ChatGPT 粘贴就行。" });
+  } catch {
+    setState({ promptCopied: "复制失败，可以手动选中右侧提示词复制。" });
+  }
+}
+
+async function copyModalPrompt() {
+  const form = document.querySelector("#textForm");
+  const style = document.querySelector("#modalPromptStyle")?.value || state.modal?.promptStyle || "dialogue";
+  const original = form?.elements.originalText.value || "";
+  try {
+    await copyText(promptFor(style, original));
+    setState({ modal: { ...state.modal, promptStyle: style, originalText: original, parseMessage: "已复制提示词。去 ChatGPT 粘贴即可。" } });
+  } catch {
+    setState({ modal: { ...state.modal, promptStyle: style, originalText: original, parseMessage: "复制失败，可以到 Prompts 页面手动复制。" } });
+  }
+}
+
+function parseAiOutputIntoTextForm() {
+  const raw = document.querySelector("#aiOutputPaste")?.value || "";
+  const parsed = parseOioBlock(raw);
+  if (!parsed) {
+    setState({ modal: { ...state.modal, parseMessage: "没有识别到 :::OIO 格式。请检查 AI 输出。" } });
+    return;
+  }
+  fillTextForm(parsed);
+  setState({ modal: { ...state.modal, promptStyle: parsed.style || state.modal.promptStyle || "dialogue", parseMessage: "已解析并填入表单，检查一下再保存。" } });
+}
+
 function saveText(form) {
   const id = state.modal.id || uid("text");
   const existing = state.texts.find((item) => item.id === id);
@@ -858,6 +1190,7 @@ function saveText(form) {
     title: form.get("title").trim(),
     originalText: form.get("originalText").trim(),
     rewrittenText: form.get("rewrittenText").trim(),
+    translation: form.get("translation").trim(),
     note: form.get("note").trim(),
     tags: splitTags(form.get("tags")),
     textType: form.get("textType") || "dialogue",
