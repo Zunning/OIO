@@ -48,13 +48,14 @@ story
 新增 Prompt 配置：
 
 ```text
+模式：Everyday Expression / IELTS Training
 英语变体：British English / American English
-CEFR 难度：A1 / A2 / B1 / B2 / C1 / C2
-IELTS 场景：Speaking / Writing / Listening / Reading
-IELTS 分数：5.5 / 6.0 / 6.5 / 7.0 / 7.5 / 8.0
+Everyday 模式：CEFR 难度 A1 / A2 / B1 / B2 / C1 / C2
+IELTS 模式：Speaking / Writing / Listening / Reading + 5.5 / 6.0 / 6.5 / 7.0 / 7.5 / 8.0
+Emoji：允许自然使用 / 不要 emoji
 ```
 
-选择 CEFR 或 IELTS 难度时，页面显示预估词汇量。这个词汇量只作为学习参考，不作为严格考试标准。
+CEFR 和 IELTS 不同时作为硬约束生效，避免提示词互相打架。选择 Everyday 模式时只使用 CEFR；选择 IELTS 模式时只使用 IELTS 分数，并在页面显示对应 CEFR 参考和预估词汇量。
 
 标签暂时不做：提示词会保留 `tags:` 字段以兼容 OIO 格式，但要求 AI 留空，OIO 解析时也不主动填充标签。
 
@@ -123,9 +124,9 @@ translation:
 
 ```text
 Use British English / American English.
-Keep the rewrite around CEFR B2.
-Estimated vocabulary range: ...
-Tune the language for IELTS Speaking Band 7.0, if selected.
+Everyday 模式：Keep the rewrite around CEFR B2.
+IELTS 模式：Tune the rewrite for IELTS Speaking Band 7.0.
+Emoji are allowed only when natural. / Do not use emoji.
 Do not generate tags in the output. Leave the tags field blank.
 ```
 

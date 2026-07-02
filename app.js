@@ -16,11 +16,13 @@ const initialState = {
   reviewChecked: false,
   reviewCorrect: false,
   showSourceText: false,
+  promptMode: "everyday",
   promptStyle: "dialogue",
   promptVariant: "british",
   promptLevel: "B2",
   promptIeltsSkill: "none",
   promptIeltsBand: "none",
+  promptEmoji: "allow",
   promptDraft: "",
   promptCopied: "",
   modal: null,
@@ -41,7 +43,7 @@ function loadState() {
 }
 
 function persist() {
-  const { route, selectedTextId, selectedChunkId, reviewQueue, reviewIndex, showAnswer, reviewInput, reviewChecked, reviewCorrect, showSourceText, promptStyle, promptVariant, promptLevel, promptIeltsSkill, promptIeltsBand, promptDraft, promptCopied, modal, search, ...data } = state;
+  const { route, selectedTextId, selectedChunkId, reviewQueue, reviewIndex, showAnswer, reviewInput, reviewChecked, reviewCorrect, showSourceText, promptMode, promptStyle, promptVariant, promptLevel, promptIeltsSkill, promptIeltsBand, promptEmoji, promptDraft, promptCopied, modal, search, ...data } = state;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
 }
 
@@ -97,7 +99,7 @@ function escapeHtml(value) {
 const PROMPT_TEMPLATES = {
   dialogue: {
     label: "Dialogue",
-    text: `You're my good British friend helping me express myself naturally in English.
+    text: `You're my friendly English expression coach helping me express myself naturally.
 
 No matter what language I use, rewrite my message based on the intended meaning, not the original wording. Make it sound natural, native, and conversational. Preserve my emotional tone. Do not summarize. It should sound like something I would actually say.
 
@@ -124,7 +126,7 @@ Do not include any extra explanations outside the :::OIO block.`,
   },
   writing: {
     label: "Writing",
-    text: `You're my thoughtful British English writing coach.
+    text: `You're my thoughtful English writing coach.
 
 No matter what language I use, rewrite my message into natural, polished English based on the intended meaning, not the original wording. Preserve my emotional tone and personal voice. Do not summarize. Make it suitable for written communication, but not stiff or overly formal.
 
@@ -151,7 +153,7 @@ Do not include any extra explanations outside the :::OIO block.`,
   },
   work: {
     label: "Work",
-    text: `You're my British English communication coach for work situations.
+    text: `You're my English communication coach for work situations.
 
 No matter what language I use, rewrite my message into clear, natural, professional English based on the intended meaning, not the original wording. Preserve the emotional tone, but make it suitable for workplace communication. Do not summarize. Avoid sounding robotic or overly formal.
 
@@ -178,7 +180,7 @@ Do not include any extra explanations outside the :::OIO block.`,
   },
   casual: {
     label: "Casual",
-    text: `You're my funny, warm British friend.
+    text: `You're my funny, warm English expression coach.
 
 No matter what language I use, rewrite my message into casual, natural English based on the intended meaning, not the original wording. Preserve the emotional tone. Make it sound friendly, relaxed, and native, with a little humor if it fits. Do not summarize.
 
@@ -205,7 +207,7 @@ Do not include any extra explanations outside the :::OIO block.`,
   },
   story: {
     label: "Story",
-    text: `You're my British English storytelling friend.
+    text: `You're my English storytelling coach.
 
 No matter what language I use, rewrite my message into natural English as a short story or vivid personal narrative based on the intended meaning, not the original wording. Preserve my emotional tone, details, and point of view. Do not summarize.
 
@@ -260,11 +262,13 @@ const IELTS_SKILLS = {
 
 function promptSettingsFromState(overrides = {}) {
   return {
+    mode: overrides.mode || state.promptMode || "everyday",
     style: overrides.style || state.promptStyle || "dialogue",
     variant: overrides.variant || state.promptVariant || "british",
     level: overrides.level || state.promptLevel || "B2",
-    ieltsSkill: overrides.ieltsSkill || state.promptIeltsSkill || "none",
-    ieltsBand: overrides.ieltsBand || state.promptIeltsBand || "none",
+    ieltsSkill: overrides.ieltsSkill || state.promptIeltsSkill || "speaking",
+    ieltsBand: overrides.ieltsBand || state.promptIeltsBand || "6.5",
+    emoji: overrides.emoji || state.promptEmoji || "allow",
   };
 }
 
@@ -272,10 +276,10 @@ function promptSummary(settings) {
   const cefr = CEFR_LEVELS[settings.level] || CEFR_LEVELS.B2;
   const ielts = IELTS_BANDS[settings.ieltsBand];
   const variant = settings.variant === "american" ? "American English" : "British English";
-  const parts = [`${variant}`, `CEFR ${settings.level}: ${cefr.vocab}`];
-  if (ielts && settings.ieltsSkill !== "none") {
-    parts.push(`IELTS ${IELTS_SKILLS[settings.ieltsSkill]} ${settings.ieltsBand}: ${ielts.vocab}, ${ielts.cefr}`);
-  }
+  const emoji = settings.emoji === "allow" ? "Emoji: allowed when natural" : "Emoji: off";
+  const parts = [`${variant}`, emoji];
+  if (settings.mode === "ielts") parts.push(`IELTS ${IELTS_SKILLS[settings.ieltsSkill]} ${settings.ieltsBand}: ${ielts.vocab}, ${ielts.cefr}`);
+  else parts.push(`CEFR ${settings.level}: ${cefr.vocab}`);
   return parts.join(" · ");
 }
 
@@ -283,16 +287,21 @@ function promptConstraints(settings) {
   const cefr = CEFR_LEVELS[settings.level] || CEFR_LEVELS.B2;
   const ielts = IELTS_BANDS[settings.ieltsBand];
   const variant = settings.variant === "american" ? "Use American English spelling, vocabulary, and phrasing." : "Use British English spelling, vocabulary, and phrasing.";
-  const level = `Keep the rewrite around CEFR ${settings.level}. Estimated vocabulary range: ${cefr.vocab}. ${cefr.note}`;
-  const ieltsLine =
-    ielts && settings.ieltsSkill !== "none"
-      ? `Tune the language for IELTS ${IELTS_SKILLS[settings.ieltsSkill]} Band ${settings.ieltsBand}. This roughly corresponds to ${ielts.cefr}; estimated vocabulary range: ${ielts.vocab}. ${ielts.note}`
-      : "Do not force IELTS exam language unless it sounds natural in the context.";
+  const difficulty =
+    settings.mode === "ielts"
+      ? `Tune the rewrite for IELTS ${IELTS_SKILLS[settings.ieltsSkill]} Band ${settings.ieltsBand}. Approximate CEFR reference: ${ielts.cefr}. Estimated vocabulary range: ${ielts.vocab}. ${ielts.note}`
+      : `Keep the rewrite around CEFR ${settings.level}. Estimated vocabulary range: ${cefr.vocab}. ${cefr.note}`;
+  const mode =
+    settings.mode === "ielts"
+      ? "Mode: IELTS training. Prioritise natural exam-appropriate language for the selected IELTS skill. Do not also apply a separate CEFR difficulty target."
+      : "Mode: everyday expression. Prioritise natural personal expression. Do not force IELTS exam style.";
+  const emoji = settings.emoji === "allow" ? "Emoji are allowed only when they feel natural and match the emotional tone. Do not overuse them." : "Do not use emoji in the rewrite.";
 
   return `Language settings:
 - ${variant}
-- ${level}
-- ${ieltsLine}
+- ${mode}
+- ${difficulty}
+- ${emoji}
 - Avoid rare or showy vocabulary unless it is genuinely natural for the intended meaning.
 - Do not generate tags in the output. Leave the tags field blank.`;
 }
@@ -577,26 +586,43 @@ function renderPrompts() {
             .join("")}
         </div>
         <div class="grid two" style="margin-top: 14px;">
+          <label>模式
+            <select id="promptMode">
+              <option value="everyday" ${settings.mode === "everyday" ? "selected" : ""}>Everyday Expression</option>
+              <option value="ielts" ${settings.mode === "ielts" ? "selected" : ""}>IELTS Training</option>
+            </select>
+          </label>
           <label>英语变体
             <select id="promptVariant">
               <option value="british" ${settings.variant === "british" ? "selected" : ""}>British English</option>
               <option value="american" ${settings.variant === "american" ? "selected" : ""}>American English</option>
             </select>
           </label>
-          <label>CEFR 难度
-            <select id="promptLevel">
-              ${Object.keys(CEFR_LEVELS).map((level) => `<option value="${level}" ${settings.level === level ? "selected" : ""}>${level}</option>`).join("")}
-            </select>
-          </label>
-          <label>IELTS 场景
-            <select id="promptIeltsSkill">
-              ${Object.entries(IELTS_SKILLS).map(([key, label]) => `<option value="${key}" ${settings.ieltsSkill === key ? "selected" : ""}>${label}</option>`).join("")}
-            </select>
-          </label>
-          <label>IELTS 分数
-            <select id="promptIeltsBand">
-              <option value="none" ${settings.ieltsBand === "none" ? "selected" : ""}>不指定</option>
-              ${Object.keys(IELTS_BANDS).map((band) => `<option value="${band}" ${settings.ieltsBand === band ? "selected" : ""}>${band}</option>`).join("")}
+          ${
+            settings.mode === "ielts"
+              ? `<label>IELTS 场景
+                  <select id="promptIeltsSkill">
+                    ${Object.entries(IELTS_SKILLS)
+                      .filter(([key]) => key !== "none")
+                      .map(([key, label]) => `<option value="${key}" ${settings.ieltsSkill === key ? "selected" : ""}>${label}</option>`)
+                      .join("")}
+                  </select>
+                </label>
+                <label>IELTS 分数
+                  <select id="promptIeltsBand">
+                    ${Object.keys(IELTS_BANDS).map((band) => `<option value="${band}" ${settings.ieltsBand === band ? "selected" : ""}>${band}</option>`).join("")}
+                  </select>
+                </label>`
+              : `<label>CEFR 难度
+                  <select id="promptLevel">
+                    ${Object.keys(CEFR_LEVELS).map((level) => `<option value="${level}" ${settings.level === level ? "selected" : ""}>${level}</option>`).join("")}
+                  </select>
+                </label>`
+          }
+          <label>Emoji
+            <select id="promptEmoji">
+              <option value="allow" ${settings.emoji === "allow" ? "selected" : ""}>允许自然使用</option>
+              <option value="off" ${settings.emoji === "off" ? "selected" : ""}>不要 emoji</option>
             </select>
           </label>
         </div>
@@ -970,11 +996,13 @@ function renderTextModal() {
   const item = state.modal.id ? state.texts.find((text) => text.id === state.modal.id) : null;
   const modalPromptStyle = state.modal.promptStyle || item?.textType || state.promptStyle || "dialogue";
   const modalSettings = promptSettingsFromState({
+    mode: state.modal.promptMode,
     style: modalPromptStyle,
     variant: state.modal.promptVariant,
     level: state.modal.promptLevel,
     ieltsSkill: state.modal.promptIeltsSkill,
     ieltsBand: state.modal.promptIeltsBand,
+    emoji: state.modal.promptEmoji,
   });
   const modalOriginal = state.modal.originalText ?? item?.originalText ?? "";
   return `
@@ -998,26 +1026,43 @@ function renderTextModal() {
                     .join("")}
                 </select>
               </label>
+              <label>模式
+                <select id="modalPromptMode">
+                  <option value="everyday" ${modalSettings.mode === "everyday" ? "selected" : ""}>Everyday Expression</option>
+                  <option value="ielts" ${modalSettings.mode === "ielts" ? "selected" : ""}>IELTS Training</option>
+                </select>
+              </label>
               <label>英语变体
                 <select id="modalPromptVariant">
                   <option value="british" ${modalSettings.variant === "british" ? "selected" : ""}>British English</option>
                   <option value="american" ${modalSettings.variant === "american" ? "selected" : ""}>American English</option>
                 </select>
               </label>
-              <label>CEFR 难度
-                <select id="modalPromptLevel">
-                  ${Object.keys(CEFR_LEVELS).map((level) => `<option value="${level}" ${modalSettings.level === level ? "selected" : ""}>${level}</option>`).join("")}
-                </select>
-              </label>
-              <label>IELTS 场景
-                <select id="modalPromptIeltsSkill">
-                  ${Object.entries(IELTS_SKILLS).map(([key, label]) => `<option value="${key}" ${modalSettings.ieltsSkill === key ? "selected" : ""}>${label}</option>`).join("")}
-                </select>
-              </label>
-              <label>IELTS 分数
-                <select id="modalPromptIeltsBand">
-                  <option value="none" ${modalSettings.ieltsBand === "none" ? "selected" : ""}>不指定</option>
-                  ${Object.keys(IELTS_BANDS).map((band) => `<option value="${band}" ${modalSettings.ieltsBand === band ? "selected" : ""}>${band}</option>`).join("")}
+              ${
+                modalSettings.mode === "ielts"
+                  ? `<label>IELTS 场景
+                      <select id="modalPromptIeltsSkill">
+                        ${Object.entries(IELTS_SKILLS)
+                          .filter(([key]) => key !== "none")
+                          .map(([key, label]) => `<option value="${key}" ${modalSettings.ieltsSkill === key ? "selected" : ""}>${label}</option>`)
+                          .join("")}
+                      </select>
+                    </label>
+                    <label>IELTS 分数
+                      <select id="modalPromptIeltsBand">
+                        ${Object.keys(IELTS_BANDS).map((band) => `<option value="${band}" ${modalSettings.ieltsBand === band ? "selected" : ""}>${band}</option>`).join("")}
+                      </select>
+                    </label>`
+                  : `<label>CEFR 难度
+                      <select id="modalPromptLevel">
+                        ${Object.keys(CEFR_LEVELS).map((level) => `<option value="${level}" ${modalSettings.level === level ? "selected" : ""}>${level}</option>`).join("")}
+                      </select>
+                    </label>`
+              }
+              <label>Emoji
+                <select id="modalPromptEmoji">
+                  <option value="allow" ${modalSettings.emoji === "allow" ? "selected" : ""}>允许自然使用</option>
+                  <option value="off" ${modalSettings.emoji === "off" ? "selected" : ""}>不要 emoji</option>
                 </select>
               </label>
               <label>AI 输出
@@ -1223,6 +1268,9 @@ document.addEventListener("input", (event) => {
   if (event.target.id === "promptDraft") {
     state = { ...state, promptDraft: event.target.value, promptCopied: "" };
   }
+  if (event.target.id === "promptMode") {
+    setState({ promptMode: event.target.value, promptCopied: "" });
+  }
   if (event.target.id === "promptVariant") {
     setState({ promptVariant: event.target.value, promptCopied: "" });
   }
@@ -1235,13 +1283,18 @@ document.addEventListener("input", (event) => {
   if (event.target.id === "promptIeltsBand") {
     setState({ promptIeltsBand: event.target.value, promptCopied: "" });
   }
-  if (["modalPromptStyle", "modalPromptVariant", "modalPromptLevel", "modalPromptIeltsSkill", "modalPromptIeltsBand"].includes(event.target.id)) {
+  if (event.target.id === "promptEmoji") {
+    setState({ promptEmoji: event.target.value, promptCopied: "" });
+  }
+  if (["modalPromptStyle", "modalPromptMode", "modalPromptVariant", "modalPromptLevel", "modalPromptIeltsSkill", "modalPromptIeltsBand", "modalPromptEmoji"].includes(event.target.id)) {
     const keyMap = {
       modalPromptStyle: "promptStyle",
+      modalPromptMode: "promptMode",
       modalPromptVariant: "promptVariant",
       modalPromptLevel: "promptLevel",
       modalPromptIeltsSkill: "promptIeltsSkill",
       modalPromptIeltsBand: "promptIeltsBand",
+      modalPromptEmoji: "promptEmoji",
     };
     state = { ...state, modal: { ...state.modal, [keyMap[event.target.id]]: event.target.value, parseMessage: "" } };
   }
@@ -1312,18 +1365,20 @@ async function copyPrompt(mode) {
 async function copyModalPrompt() {
   const form = document.querySelector("#textForm");
   const settings = promptSettingsFromState({
+    mode: document.querySelector("#modalPromptMode")?.value || state.modal?.promptMode,
     style: document.querySelector("#modalPromptStyle")?.value || state.modal?.promptStyle || "dialogue",
     variant: document.querySelector("#modalPromptVariant")?.value || state.modal?.promptVariant,
     level: document.querySelector("#modalPromptLevel")?.value || state.modal?.promptLevel,
     ieltsSkill: document.querySelector("#modalPromptIeltsSkill")?.value || state.modal?.promptIeltsSkill,
     ieltsBand: document.querySelector("#modalPromptIeltsBand")?.value || state.modal?.promptIeltsBand,
+    emoji: document.querySelector("#modalPromptEmoji")?.value || state.modal?.promptEmoji,
   });
   const original = form?.elements.originalText.value || "";
   try {
     await copyText(promptFor(settings.style, original, settings));
-    setState({ modal: { ...state.modal, promptStyle: settings.style, promptVariant: settings.variant, promptLevel: settings.level, promptIeltsSkill: settings.ieltsSkill, promptIeltsBand: settings.ieltsBand, originalText: original, parseMessage: "已复制提示词。去 ChatGPT 粘贴即可。" } });
+    setState({ modal: { ...state.modal, promptMode: settings.mode, promptStyle: settings.style, promptVariant: settings.variant, promptLevel: settings.level, promptIeltsSkill: settings.ieltsSkill, promptIeltsBand: settings.ieltsBand, promptEmoji: settings.emoji, originalText: original, parseMessage: "已复制提示词。去 ChatGPT 粘贴即可。" } });
   } catch {
-    setState({ modal: { ...state.modal, promptStyle: settings.style, promptVariant: settings.variant, promptLevel: settings.level, promptIeltsSkill: settings.ieltsSkill, promptIeltsBand: settings.ieltsBand, originalText: original, parseMessage: "复制失败，可以到 Prompts 页面手动复制。" } });
+    setState({ modal: { ...state.modal, promptMode: settings.mode, promptStyle: settings.style, promptVariant: settings.variant, promptLevel: settings.level, promptIeltsSkill: settings.ieltsSkill, promptIeltsBand: settings.ieltsBand, promptEmoji: settings.emoji, originalText: original, parseMessage: "复制失败，可以到 Prompts 页面手动复制。" } });
   }
 }
 
