@@ -261,13 +261,16 @@ const IELTS_SKILLS = {
 };
 
 function promptSettingsFromState(overrides = {}) {
+  const mode = overrides.mode || state.promptMode || "everyday";
+  const ieltsSkill = overrides.ieltsSkill || state.promptIeltsSkill || "speaking";
+  const ieltsBand = overrides.ieltsBand || state.promptIeltsBand || "6.5";
   return {
-    mode: overrides.mode || state.promptMode || "everyday",
+    mode,
     style: overrides.style || state.promptStyle || "dialogue",
     variant: overrides.variant || state.promptVariant || "british",
     level: overrides.level || state.promptLevel || "B2",
-    ieltsSkill: overrides.ieltsSkill || state.promptIeltsSkill || "speaking",
-    ieltsBand: overrides.ieltsBand || state.promptIeltsBand || "6.5",
+    ieltsSkill: mode === "ielts" && ieltsSkill === "none" ? "speaking" : ieltsSkill,
+    ieltsBand: mode === "ielts" && ieltsBand === "none" ? "6.5" : ieltsBand,
     emoji: overrides.emoji || state.promptEmoji || "allow",
   };
 }
@@ -306,9 +309,15 @@ function promptConstraints(settings) {
 - Do not generate tags in the output. Leave the tags field blank.`;
 }
 
+function templateStyleFor(settings, requestedStyle) {
+  if (settings.mode !== "ielts") return requestedStyle;
+  return ["writing", "reading"].includes(settings.ieltsSkill) ? "writing" : "dialogue";
+}
+
 function promptFor(style, original = "", settingsOverride = {}) {
   const settings = promptSettingsFromState({ ...settingsOverride, style });
-  const template = PROMPT_TEMPLATES[style] || PROMPT_TEMPLATES.dialogue;
+  const templateStyle = templateStyleFor(settings, style);
+  const template = PROMPT_TEMPLATES[templateStyle] || PROMPT_TEMPLATES.dialogue;
   const text = template.text
     .replace("tags: Generate 2-4 short tags in English, separated by commas.", "tags:")
     .replace("Do not include any extra explanations outside the :::OIO block.", `${promptConstraints(settings)}\n\nDo not include any extra explanations outside the :::OIO block.`);
@@ -560,6 +569,7 @@ function renderPrompts() {
   const settings = promptSettingsFromState();
   const style = settings.style;
   const promptText = promptFor(style, state.promptDraft || "", settings);
+  const isIelts = settings.mode === "ielts";
 
   return `
     <div class="topbar">
@@ -575,15 +585,26 @@ function renderPrompts() {
 
     <div class="grid two">
       <section class="panel">
-        <h3>风格</h3>
+        <h3>${isIelts ? "IELTS 技能" : "风格"}</h3>
         <div class="segmented">
-          ${Object.entries(PROMPT_TEMPLATES)
-            .map(
-              ([key, item]) => `
-                <button class="${style === key ? "active" : ""}" data-prompt-style="${key}">${item.label}</button>
-              `,
-            )
-            .join("")}
+          ${
+            isIelts
+              ? Object.entries(IELTS_SKILLS)
+                  .filter(([key]) => key !== "none")
+                  .map(
+                    ([key, label]) => `
+                      <button class="${settings.ieltsSkill === key ? "active" : ""}" data-prompt-ielts-skill="${key}">${label}</button>
+                    `,
+                  )
+                  .join("")
+              : Object.entries(PROMPT_TEMPLATES)
+                  .map(
+                    ([key, item]) => `
+                      <button class="${style === key ? "active" : ""}" data-prompt-style="${key}">${item.label}</button>
+                    `,
+                  )
+                  .join("")
+          }
         </div>
         <div class="grid two" style="margin-top: 14px;">
           <label>模式
@@ -600,15 +621,7 @@ function renderPrompts() {
           </label>
           ${
             settings.mode === "ielts"
-              ? `<label>IELTS 场景
-                  <select id="promptIeltsSkill">
-                    ${Object.entries(IELTS_SKILLS)
-                      .filter(([key]) => key !== "none")
-                      .map(([key, label]) => `<option value="${key}" ${settings.ieltsSkill === key ? "selected" : ""}>${label}</option>`)
-                      .join("")}
-                  </select>
-                </label>
-                <label>IELTS 分数
+              ? `<label>IELTS 分数
                   <select id="promptIeltsBand">
                     ${Object.keys(IELTS_BANDS).map((band) => `<option value="${band}" ${settings.ieltsBand === band ? "selected" : ""}>${band}</option>`).join("")}
                   </select>
@@ -1019,19 +1032,30 @@ function renderTextModal() {
               <button type="button" class="secondary small" data-open-chatgpt>打开 ChatGPT</button>
             </div>
             <div class="grid two" style="margin-top: 12px;">
-              <label>提示词风格
-                <select id="modalPromptStyle">
-                  ${Object.entries(PROMPT_TEMPLATES)
-                    .map(([key, prompt]) => `<option value="${key}" ${modalPromptStyle === key ? "selected" : ""}>${prompt.label}</option>`)
-                    .join("")}
-                </select>
-              </label>
               <label>模式
                 <select id="modalPromptMode">
                   <option value="everyday" ${modalSettings.mode === "everyday" ? "selected" : ""}>Everyday Expression</option>
                   <option value="ielts" ${modalSettings.mode === "ielts" ? "selected" : ""}>IELTS Training</option>
                 </select>
               </label>
+              ${
+                modalSettings.mode === "ielts"
+                  ? `<label>IELTS 技能
+                      <select id="modalPromptIeltsSkill">
+                        ${Object.entries(IELTS_SKILLS)
+                          .filter(([key]) => key !== "none")
+                          .map(([key, label]) => `<option value="${key}" ${modalSettings.ieltsSkill === key ? "selected" : ""}>${label}</option>`)
+                          .join("")}
+                      </select>
+                    </label>`
+                  : `<label>提示词风格
+                      <select id="modalPromptStyle">
+                        ${Object.entries(PROMPT_TEMPLATES)
+                          .map(([key, prompt]) => `<option value="${key}" ${modalPromptStyle === key ? "selected" : ""}>${prompt.label}</option>`)
+                          .join("")}
+                      </select>
+                    </label>`
+              }
               <label>英语变体
                 <select id="modalPromptVariant">
                   <option value="british" ${modalSettings.variant === "british" ? "selected" : ""}>British English</option>
@@ -1040,15 +1064,7 @@ function renderTextModal() {
               </label>
               ${
                 modalSettings.mode === "ielts"
-                  ? `<label>IELTS 场景
-                      <select id="modalPromptIeltsSkill">
-                        ${Object.entries(IELTS_SKILLS)
-                          .filter(([key]) => key !== "none")
-                          .map(([key, label]) => `<option value="${key}" ${modalSettings.ieltsSkill === key ? "selected" : ""}>${label}</option>`)
-                          .join("")}
-                      </select>
-                    </label>
-                    <label>IELTS 分数
+                  ? `<label>IELTS 分数
                       <select id="modalPromptIeltsBand">
                         ${Object.keys(IELTS_BANDS).map((band) => `<option value="${band}" ${modalSettings.ieltsBand === band ? "selected" : ""}>${band}</option>`).join("")}
                       </select>
@@ -1213,12 +1229,14 @@ function render() {
 }
 
 document.addEventListener("click", (event) => {
-  const target = event.target.closest("[data-route], [data-open-modal], [data-close-modal], [data-view-text], [data-edit-text], [data-delete-text], [data-create-chunk], [data-open-cloze], [data-token-index], [data-delete-chunk], [data-delete-card], [data-start-review], [data-rate], [data-stop-review], [data-save-source-intent], [data-finish-source-intents], [data-toggle-source-text], [data-open-source-intents], [data-prompt-style], [data-copy-prompt], [data-open-chatgpt], [data-copy-modal-prompt], [data-parse-ai-output]");
+  const target = event.target.closest("[data-route], [data-open-modal], [data-close-modal], [data-view-text], [data-edit-text], [data-delete-text], [data-create-chunk], [data-open-cloze], [data-token-index], [data-delete-chunk], [data-delete-card], [data-start-review], [data-rate], [data-stop-review], [data-save-source-intent], [data-finish-source-intents], [data-toggle-source-text], [data-open-source-intents], [data-prompt-style], [data-prompt-ielts-skill], [data-copy-prompt], [data-open-chatgpt], [data-copy-modal-prompt], [data-parse-ai-output]");
   if (!target) return;
 
   if (target.dataset.route) routeTo(target.dataset.route);
 
   if (target.dataset.promptStyle) setState({ promptStyle: target.dataset.promptStyle, promptCopied: "" });
+
+  if (target.dataset.promptIeltsSkill) setState({ promptIeltsSkill: target.dataset.promptIeltsSkill, promptCopied: "" });
 
   if (target.dataset.copyPrompt) copyPrompt(target.dataset.copyPrompt);
 
@@ -1263,7 +1281,7 @@ document.addEventListener("click", (event) => {
   if (target.dataset.parseAiOutput !== undefined) parseAiOutputIntoTextForm();
 });
 
-document.addEventListener("input", (event) => {
+function handleLiveInput(event) {
   if (event.target.id === "searchInput") setState({ search: event.target.value });
   if (event.target.id === "promptDraft") {
     state = { ...state, promptDraft: event.target.value, promptCopied: "" };
@@ -1296,7 +1314,7 @@ document.addEventListener("input", (event) => {
       modalPromptIeltsBand: "promptIeltsBand",
       modalPromptEmoji: "promptEmoji",
     };
-    state = { ...state, modal: { ...state.modal, [keyMap[event.target.id]]: event.target.value, parseMessage: "" } };
+    setState({ modal: { ...state.modal, [keyMap[event.target.id]]: event.target.value, parseMessage: "" } });
   }
   if (event.target.id === "reviewInput") {
     state = { ...state, reviewInput: event.target.value };
@@ -1309,7 +1327,10 @@ document.addEventListener("input", (event) => {
     };
     persist();
   }
-});
+}
+
+document.addEventListener("input", handleLiveInput);
+document.addEventListener("change", handleLiveInput);
 
 document.addEventListener("submit", (event) => {
   event.preventDefault();

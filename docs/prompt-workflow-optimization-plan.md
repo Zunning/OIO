@@ -57,6 +57,13 @@ Emoji：允许自然使用 / 不要 emoji
 
 CEFR 和 IELTS 不同时作为硬约束生效，避免提示词互相打架。选择 Everyday 模式时只使用 CEFR；选择 IELTS 模式时只使用 IELTS 分数，并在页面显示对应 CEFR 参考和预估词汇量。
 
+界面切换规则：
+
+```text
+Everyday Expression：上方选择 dialogue / writing / work / casual / story，下方选择 CEFR 难度。
+IELTS Training：上方选择 Listening / Speaking / Reading / Writing，下方选择 IELTS 分数。
+```
+
 标签暂时不做：提示词会保留 `tags:` 字段以兼容 OIO 格式，但要求 AI 留空，OIO 解析时也不主动填充标签。
 
 ### 2.2 新建文本页增强
