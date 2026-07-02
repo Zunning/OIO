@@ -17,6 +17,10 @@ const initialState = {
   reviewCorrect: false,
   showSourceText: false,
   promptStyle: "dialogue",
+  promptVariant: "british",
+  promptLevel: "B2",
+  promptIeltsSkill: "none",
+  promptIeltsBand: "none",
   promptDraft: "",
   promptCopied: "",
   modal: null,
@@ -37,7 +41,7 @@ function loadState() {
 }
 
 function persist() {
-  const { route, selectedTextId, selectedChunkId, reviewQueue, reviewIndex, showAnswer, reviewInput, reviewChecked, reviewCorrect, showSourceText, promptStyle, promptDraft, promptCopied, modal, search, ...data } = state;
+  const { route, selectedTextId, selectedChunkId, reviewQueue, reviewIndex, showAnswer, reviewInput, reviewChecked, reviewCorrect, showSourceText, promptStyle, promptVariant, promptLevel, promptIeltsSkill, promptIeltsBand, promptDraft, promptCopied, modal, search, ...data } = state;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
 }
 
@@ -228,10 +232,79 @@ Do not include any extra explanations outside the :::OIO block.`,
   },
 };
 
-function promptFor(style, original = "") {
+const CEFR_LEVELS = {
+  A1: { vocab: "约 500-1,000 词", note: "非常基础，适合简单日常句子。" },
+  A2: { vocab: "约 1,000-2,000 词", note: "基础日常交流，句子短而直接。" },
+  B1: { vocab: "约 2,000-3,500 词", note: "能处理常见生活和工作话题。" },
+  B2: { vocab: "约 4,000-6,000 词", note: "自然清楚，适合多数真实表达。" },
+  C1: { vocab: "约 8,000-10,000 词", note: "更灵活、更地道，允许较丰富表达。" },
+  C2: { vocab: "10,000+ 词", note: "接近高阶母语表达，但避免故意炫技。" },
+};
+
+const IELTS_BANDS = {
+  "5.5": { vocab: "约 3,000-4,000 词", cefr: "B1-B2", note: "表达清楚优先，避免复杂词堆叠。" },
+  "6.0": { vocab: "约 4,000-5,000 词", cefr: "B2", note: "自然、准确，适当加入常用地道表达。" },
+  "6.5": { vocab: "约 5,000-6,500 词", cefr: "B2", note: "更流畅，词汇选择更具体。" },
+  "7.0": { vocab: "约 6,000-8,000 词", cefr: "B2-C1", note: "自然灵活，允许更细腻的表达。" },
+  "7.5": { vocab: "约 8,000-9,000 词", cefr: "C1", note: "表达成熟，有较强的语域控制。" },
+  "8.0": { vocab: "约 9,000-10,000+ 词", cefr: "C1-C2", note: "高级、自然，但仍保持像真人会说的话。" },
+};
+
+const IELTS_SKILLS = {
+  none: "不指定",
+  speaking: "Speaking",
+  writing: "Writing",
+  listening: "Listening",
+  reading: "Reading",
+};
+
+function promptSettingsFromState(overrides = {}) {
+  return {
+    style: overrides.style || state.promptStyle || "dialogue",
+    variant: overrides.variant || state.promptVariant || "british",
+    level: overrides.level || state.promptLevel || "B2",
+    ieltsSkill: overrides.ieltsSkill || state.promptIeltsSkill || "none",
+    ieltsBand: overrides.ieltsBand || state.promptIeltsBand || "none",
+  };
+}
+
+function promptSummary(settings) {
+  const cefr = CEFR_LEVELS[settings.level] || CEFR_LEVELS.B2;
+  const ielts = IELTS_BANDS[settings.ieltsBand];
+  const variant = settings.variant === "american" ? "American English" : "British English";
+  const parts = [`${variant}`, `CEFR ${settings.level}: ${cefr.vocab}`];
+  if (ielts && settings.ieltsSkill !== "none") {
+    parts.push(`IELTS ${IELTS_SKILLS[settings.ieltsSkill]} ${settings.ieltsBand}: ${ielts.vocab}, ${ielts.cefr}`);
+  }
+  return parts.join(" · ");
+}
+
+function promptConstraints(settings) {
+  const cefr = CEFR_LEVELS[settings.level] || CEFR_LEVELS.B2;
+  const ielts = IELTS_BANDS[settings.ieltsBand];
+  const variant = settings.variant === "american" ? "Use American English spelling, vocabulary, and phrasing." : "Use British English spelling, vocabulary, and phrasing.";
+  const level = `Keep the rewrite around CEFR ${settings.level}. Estimated vocabulary range: ${cefr.vocab}. ${cefr.note}`;
+  const ieltsLine =
+    ielts && settings.ieltsSkill !== "none"
+      ? `Tune the language for IELTS ${IELTS_SKILLS[settings.ieltsSkill]} Band ${settings.ieltsBand}. This roughly corresponds to ${ielts.cefr}; estimated vocabulary range: ${ielts.vocab}. ${ielts.note}`
+      : "Do not force IELTS exam language unless it sounds natural in the context.";
+
+  return `Language settings:
+- ${variant}
+- ${level}
+- ${ieltsLine}
+- Avoid rare or showy vocabulary unless it is genuinely natural for the intended meaning.
+- Do not generate tags in the output. Leave the tags field blank.`;
+}
+
+function promptFor(style, original = "", settingsOverride = {}) {
+  const settings = promptSettingsFromState({ ...settingsOverride, style });
   const template = PROMPT_TEMPLATES[style] || PROMPT_TEMPLATES.dialogue;
-  if (!original.trim()) return template.text;
-  return `${template.text}\n\nMy original message:\n${original.trim()}`;
+  const text = template.text
+    .replace("tags: Generate 2-4 short tags in English, separated by commas.", "tags:")
+    .replace("Do not include any extra explanations outside the :::OIO block.", `${promptConstraints(settings)}\n\nDo not include any extra explanations outside the :::OIO block.`);
+  if (!original.trim()) return text;
+  return `${text}\n\nMy original message:\n${original.trim()}`;
 }
 
 function parseOioBlock(value) {
@@ -475,8 +548,9 @@ function renderHome() {
 }
 
 function renderPrompts() {
-  const style = state.promptStyle || "dialogue";
-  const promptText = promptFor(style, state.promptDraft || "");
+  const settings = promptSettingsFromState();
+  const style = settings.style;
+  const promptText = promptFor(style, state.promptDraft || "", settings);
 
   return `
     <div class="topbar">
@@ -501,6 +575,33 @@ function renderPrompts() {
               `,
             )
             .join("")}
+        </div>
+        <div class="grid two" style="margin-top: 14px;">
+          <label>英语变体
+            <select id="promptVariant">
+              <option value="british" ${settings.variant === "british" ? "selected" : ""}>British English</option>
+              <option value="american" ${settings.variant === "american" ? "selected" : ""}>American English</option>
+            </select>
+          </label>
+          <label>CEFR 难度
+            <select id="promptLevel">
+              ${Object.keys(CEFR_LEVELS).map((level) => `<option value="${level}" ${settings.level === level ? "selected" : ""}>${level}</option>`).join("")}
+            </select>
+          </label>
+          <label>IELTS 场景
+            <select id="promptIeltsSkill">
+              ${Object.entries(IELTS_SKILLS).map(([key, label]) => `<option value="${key}" ${settings.ieltsSkill === key ? "selected" : ""}>${label}</option>`).join("")}
+            </select>
+          </label>
+          <label>IELTS 分数
+            <select id="promptIeltsBand">
+              <option value="none" ${settings.ieltsBand === "none" ? "selected" : ""}>不指定</option>
+              ${Object.keys(IELTS_BANDS).map((band) => `<option value="${band}" ${settings.ieltsBand === band ? "selected" : ""}>${band}</option>`).join("")}
+            </select>
+          </label>
+        </div>
+        <div class="level-note">
+          ${escapeHtml(promptSummary(settings))}
         </div>
         <label style="margin-top: 14px;">
           原始输入，可选
@@ -868,6 +969,13 @@ function renderModal() {
 function renderTextModal() {
   const item = state.modal.id ? state.texts.find((text) => text.id === state.modal.id) : null;
   const modalPromptStyle = state.modal.promptStyle || item?.textType || state.promptStyle || "dialogue";
+  const modalSettings = promptSettingsFromState({
+    style: modalPromptStyle,
+    variant: state.modal.promptVariant,
+    level: state.modal.promptLevel,
+    ieltsSkill: state.modal.promptIeltsSkill,
+    ieltsBand: state.modal.promptIeltsBand,
+  });
   const modalOriginal = state.modal.originalText ?? item?.originalText ?? "";
   return `
     <div class="modal">
@@ -890,10 +998,33 @@ function renderTextModal() {
                     .join("")}
                 </select>
               </label>
+              <label>英语变体
+                <select id="modalPromptVariant">
+                  <option value="british" ${modalSettings.variant === "british" ? "selected" : ""}>British English</option>
+                  <option value="american" ${modalSettings.variant === "american" ? "selected" : ""}>American English</option>
+                </select>
+              </label>
+              <label>CEFR 难度
+                <select id="modalPromptLevel">
+                  ${Object.keys(CEFR_LEVELS).map((level) => `<option value="${level}" ${modalSettings.level === level ? "selected" : ""}>${level}</option>`).join("")}
+                </select>
+              </label>
+              <label>IELTS 场景
+                <select id="modalPromptIeltsSkill">
+                  ${Object.entries(IELTS_SKILLS).map(([key, label]) => `<option value="${key}" ${modalSettings.ieltsSkill === key ? "selected" : ""}>${label}</option>`).join("")}
+                </select>
+              </label>
+              <label>IELTS 分数
+                <select id="modalPromptIeltsBand">
+                  <option value="none" ${modalSettings.ieltsBand === "none" ? "selected" : ""}>不指定</option>
+                  ${Object.keys(IELTS_BANDS).map((band) => `<option value="${band}" ${modalSettings.ieltsBand === band ? "selected" : ""}>${band}</option>`).join("")}
+                </select>
+              </label>
               <label>AI 输出
                 <textarea id="aiOutputPaste" placeholder="把 ChatGPT 输出的 :::OIO ... ::: 粘贴到这里"></textarea>
               </label>
             </div>
+            <div class="level-note">${escapeHtml(promptSummary(modalSettings))}</div>
             <div class="toolbar" style="margin-top: 12px;">
               <button type="button" data-copy-modal-prompt>复制提示词 + 原始输入</button>
               <button type="button" class="secondary" data-parse-ai-output>自动解析</button>
@@ -1092,8 +1223,27 @@ document.addEventListener("input", (event) => {
   if (event.target.id === "promptDraft") {
     state = { ...state, promptDraft: event.target.value, promptCopied: "" };
   }
-  if (event.target.id === "modalPromptStyle") {
-    state = { ...state, modal: { ...state.modal, promptStyle: event.target.value, parseMessage: "" } };
+  if (event.target.id === "promptVariant") {
+    setState({ promptVariant: event.target.value, promptCopied: "" });
+  }
+  if (event.target.id === "promptLevel") {
+    setState({ promptLevel: event.target.value, promptCopied: "" });
+  }
+  if (event.target.id === "promptIeltsSkill") {
+    setState({ promptIeltsSkill: event.target.value, promptCopied: "" });
+  }
+  if (event.target.id === "promptIeltsBand") {
+    setState({ promptIeltsBand: event.target.value, promptCopied: "" });
+  }
+  if (["modalPromptStyle", "modalPromptVariant", "modalPromptLevel", "modalPromptIeltsSkill", "modalPromptIeltsBand"].includes(event.target.id)) {
+    const keyMap = {
+      modalPromptStyle: "promptStyle",
+      modalPromptVariant: "promptVariant",
+      modalPromptLevel: "promptLevel",
+      modalPromptIeltsSkill: "promptIeltsSkill",
+      modalPromptIeltsBand: "promptIeltsBand",
+    };
+    state = { ...state, modal: { ...state.modal, [keyMap[event.target.id]]: event.target.value, parseMessage: "" } };
   }
   if (event.target.id === "reviewInput") {
     state = { ...state, reviewInput: event.target.value };
@@ -1143,14 +1293,14 @@ function fillTextForm(parsed) {
   form.elements.rewrittenText.value = parsed.rewrite || form.elements.rewrittenText.value;
   form.elements.translation.value = parsed.translation || form.elements.translation.value;
   form.elements.note.value = parsed.translation || form.elements.note.value;
-  form.elements.tags.value = parsed.tags?.join(", ") || form.elements.tags.value;
   if (parsed.style && form.elements.textType.querySelector(`option[value="${parsed.style}"]`)) {
     form.elements.textType.value = parsed.style;
   }
 }
 
 async function copyPrompt(mode) {
-  const text = mode === "withInput" ? promptFor(state.promptStyle, state.promptDraft || "") : promptFor(state.promptStyle, "");
+  const settings = promptSettingsFromState();
+  const text = mode === "withInput" ? promptFor(settings.style, state.promptDraft || "", settings) : promptFor(settings.style, "", settings);
   try {
     await copyText(text);
     setState({ promptCopied: "已复制。去 ChatGPT 粘贴就行。" });
@@ -1161,13 +1311,19 @@ async function copyPrompt(mode) {
 
 async function copyModalPrompt() {
   const form = document.querySelector("#textForm");
-  const style = document.querySelector("#modalPromptStyle")?.value || state.modal?.promptStyle || "dialogue";
+  const settings = promptSettingsFromState({
+    style: document.querySelector("#modalPromptStyle")?.value || state.modal?.promptStyle || "dialogue",
+    variant: document.querySelector("#modalPromptVariant")?.value || state.modal?.promptVariant,
+    level: document.querySelector("#modalPromptLevel")?.value || state.modal?.promptLevel,
+    ieltsSkill: document.querySelector("#modalPromptIeltsSkill")?.value || state.modal?.promptIeltsSkill,
+    ieltsBand: document.querySelector("#modalPromptIeltsBand")?.value || state.modal?.promptIeltsBand,
+  });
   const original = form?.elements.originalText.value || "";
   try {
-    await copyText(promptFor(style, original));
-    setState({ modal: { ...state.modal, promptStyle: style, originalText: original, parseMessage: "已复制提示词。去 ChatGPT 粘贴即可。" } });
+    await copyText(promptFor(settings.style, original, settings));
+    setState({ modal: { ...state.modal, promptStyle: settings.style, promptVariant: settings.variant, promptLevel: settings.level, promptIeltsSkill: settings.ieltsSkill, promptIeltsBand: settings.ieltsBand, originalText: original, parseMessage: "已复制提示词。去 ChatGPT 粘贴即可。" } });
   } catch {
-    setState({ modal: { ...state.modal, promptStyle: style, originalText: original, parseMessage: "复制失败，可以到 Prompts 页面手动复制。" } });
+    setState({ modal: { ...state.modal, promptStyle: settings.style, promptVariant: settings.variant, promptLevel: settings.level, promptIeltsSkill: settings.ieltsSkill, promptIeltsBand: settings.ieltsBand, originalText: original, parseMessage: "复制失败，可以到 Prompts 页面手动复制。" } });
   }
 }
 

@@ -45,6 +45,19 @@ work
 story
 ```
 
+新增 Prompt 配置：
+
+```text
+英语变体：British English / American English
+CEFR 难度：A1 / A2 / B1 / B2 / C1 / C2
+IELTS 场景：Speaking / Writing / Listening / Reading
+IELTS 分数：5.5 / 6.0 / 6.5 / 7.0 / 7.5 / 8.0
+```
+
+选择 CEFR 或 IELTS 难度时，页面显示预估词汇量。这个词汇量只作为学习参考，不作为严格考试标准。
+
+标签暂时不做：提示词会保留 `tags:` 字段以兼容 OIO 格式，但要求 AI 留空，OIO 解析时也不主动填充标签。
+
 ### 2.2 新建文本页增强
 
 新建文本页增加：
@@ -105,6 +118,16 @@ translation:
 - 以后能扩展字段
 
 ## 4. 通用提示词模板
+
+所有模板都会追加这些动态约束：
+
+```text
+Use British English / American English.
+Keep the rewrite around CEFR B2.
+Estimated vocabulary range: ...
+Tune the language for IELTS Speaking Band 7.0, if selected.
+Do not generate tags in the output. Leave the tags field blank.
+```
 
 ### 4.1 Dialogue Prompt
 

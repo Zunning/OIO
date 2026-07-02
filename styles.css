@@ -260,6 +260,17 @@ label {
   font-size: 13px;
 }
 
+.level-note {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(47, 111, 115, 0.22);
+  border-radius: 8px;
+  background: rgba(47, 111, 115, 0.08);
+  color: var(--accent-strong);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .chips {
   display: flex;
   flex-wrap: wrap;
