@@ -549,6 +549,32 @@ function cardLabel(card) {
   return chunk?.selectedText || card.answer || card.clozeText || "Untitled card";
 }
 
+function reviewGroupsForDate(day) {
+  const groups = new Map();
+  reviewsForDate(day).forEach((review) => {
+    const card = state.cards.find((item) => item.id === review.cardId);
+    const textId = card?.textId || "unknown";
+    if (!groups.has(textId)) {
+      const text = state.texts.find((item) => item.id === textId);
+      groups.set(textId, {
+        textId,
+        title: text?.title || "已删除文本",
+        reviews: [],
+      });
+    }
+    groups.get(textId).reviews.push({ review, card });
+  });
+  return [...groups.values()].sort((a, b) => b.reviews.length - a.reviews.length || a.title.localeCompare(b.title));
+}
+
+function ratingCounts(reviews) {
+  return {
+    again: reviews.filter((review) => review.rating === "again").length,
+    good: reviews.filter((review) => review.rating === "good").length,
+    easy: reviews.filter((review) => review.rating === "easy").length,
+  };
+}
+
 function chunksForText(textId) {
   return state.chunks.filter((chunk) => chunk.textId === textId);
 }
@@ -664,16 +690,15 @@ function renderHome() {
 
 function renderTodayReviewList(reviews) {
   if (!reviews.length) return `<div class="empty compact-empty">完成 1 张复习后，今天就会自动签到。</div>`;
+  const groups = reviewGroupsForDate(todayDate());
   return `
     <div class="mini-list">
-      ${reviews
-        .slice(-6)
-        .reverse()
-        .map((review) => {
-          const card = state.cards.find((item) => item.id === review.cardId);
-          return `<button type="button" class="mini-row" data-calendar-day="${dateKey(review.reviewedAt)}">
-            <span>${escapeHtml(card ? cardLabel(card) : "已删除卡片")}</span>
-            <strong>${escapeHtml(review.rating)}</strong>
+      ${groups
+        .map((group) => {
+          const counts = ratingCounts(group.reviews.map((item) => item.review));
+          return `<button type="button" class="mini-row" data-calendar-group="${todayDate()}|${group.textId}">
+            <span>${escapeHtml(group.title)}</span>
+            <strong>${group.reviews.length} 张${counts.again ? ` · Again ${counts.again}` : ""}</strong>
           </button>`;
         })
         .join("")}
@@ -1209,40 +1234,60 @@ function renderModal() {
 
 function renderDailyReviewModal() {
   const reviews = reviewsForDate(state.modal.day);
-  const againCount = reviews.filter((review) => review.rating === "again").length;
-  const goodCount = reviews.filter((review) => review.rating === "good").length;
-  const easyCount = reviews.filter((review) => review.rating === "easy").length;
+  const groups = reviewGroupsForDate(state.modal.day);
+  const selectedGroup = state.modal.textId ? groups.find((group) => group.textId === state.modal.textId) : null;
+  const counts = ratingCounts(reviews);
   return `
     <div class="modal">
       <div class="modal-box">
         <div class="section-head">
           <div>
-            <h3>${formatPlainDate(state.modal.day)} 复习记录</h3>
-            <p class="subtle">${reviews.length ? `${reviews.length} 张 · Again ${againCount} · Good ${goodCount} · Easy ${easyCount}` : "这一天还没有复习记录。"}</p>
+            <h3>${selectedGroup ? escapeHtml(selectedGroup.title) : `${formatPlainDate(state.modal.day)} 复习记录`}</h3>
+            <p class="subtle">${reviews.length ? `${groups.length} 组 · ${reviews.length} 张 · Again ${counts.again} · Good ${counts.good} · Easy ${counts.easy}` : "这一天还没有复习记录。"}</p>
           </div>
-          <button type="button" class="secondary" data-close-modal>关闭</button>
+          <div class="toolbar">
+            ${selectedGroup ? `<button type="button" class="secondary" data-calendar-day="${state.modal.day}">返回组列表</button>` : ""}
+            <button type="button" class="secondary" data-close-modal>关闭</button>
+          </div>
         </div>
         <div class="mini-list" style="margin-top: 14px;">
           ${
             reviews.length
-              ? reviews
-                  .slice()
-                  .reverse()
-                  .map((review) => {
-                    const card = state.cards.find((item) => item.id === review.cardId);
-                    const sourceIntent = card ? sourceIntentFor(card.sourceIntentId) : null;
-                    return `<div class="mini-row static">
-                      <span>${escapeHtml(card ? cardLabel(card) : "已删除卡片")}${sourceIntent ? ` · ${escapeHtml(sourceIntent.note)}` : ""}</span>
-                      <strong>${escapeHtml(review.rating)}</strong>
-                    </div>`;
-                  })
-                  .join("")
+              ? selectedGroup
+                ? renderDailyGroupChunks(selectedGroup)
+                : renderDailyGroupList(state.modal.day, groups)
               : `<div class="empty compact-empty">当天没有内容。</div>`
           }
         </div>
       </div>
     </div>
   `;
+}
+
+function renderDailyGroupList(day, groups) {
+  return groups
+    .map((group) => {
+      const counts = ratingCounts(group.reviews.map((item) => item.review));
+      return `<button type="button" class="mini-row" data-calendar-group="${day}|${group.textId}">
+        <span>${escapeHtml(group.title)}</span>
+        <strong>${group.reviews.length} 张${counts.again ? ` · Again ${counts.again}` : ""}</strong>
+      </button>`;
+    })
+    .join("");
+}
+
+function renderDailyGroupChunks(group) {
+  return group.reviews
+    .slice()
+    .reverse()
+    .map(({ review, card }) => {
+      const sourceIntent = card ? sourceIntentFor(card.sourceIntentId) : null;
+      return `<div class="mini-row static">
+        <span>${escapeHtml(card ? cardLabel(card) : "已删除卡片")}${sourceIntent ? ` · ${escapeHtml(sourceIntent.note)}` : ""}</span>
+        <strong>${escapeHtml(review.rating)}</strong>
+      </div>`;
+    })
+    .join("");
 }
 
 function renderTextModal() {
@@ -1479,7 +1524,7 @@ function render() {
 }
 
 document.addEventListener("click", (event) => {
-  const target = event.target.closest("[data-route], [data-open-modal], [data-close-modal], [data-view-text], [data-edit-text], [data-delete-text], [data-create-chunk], [data-open-cloze], [data-token-index], [data-delete-chunk], [data-delete-card], [data-start-review], [data-continue-review], [data-cleanup-familiar], [data-clear-review-summary], [data-calendar-day], [data-rate], [data-stop-review], [data-save-source-intent], [data-finish-source-intents], [data-toggle-source-text], [data-open-source-intents], [data-prompt-style], [data-prompt-ielts-skill], [data-copy-prompt], [data-open-chatgpt], [data-copy-modal-prompt], [data-parse-ai-output]");
+  const target = event.target.closest("[data-route], [data-open-modal], [data-close-modal], [data-view-text], [data-edit-text], [data-delete-text], [data-create-chunk], [data-open-cloze], [data-token-index], [data-delete-chunk], [data-delete-card], [data-start-review], [data-continue-review], [data-cleanup-familiar], [data-clear-review-summary], [data-calendar-day], [data-calendar-group], [data-rate], [data-stop-review], [data-save-source-intent], [data-finish-source-intents], [data-toggle-source-text], [data-open-source-intents], [data-prompt-style], [data-prompt-ielts-skill], [data-copy-prompt], [data-open-chatgpt], [data-copy-modal-prompt], [data-parse-ai-output]");
   if (!target) return;
 
   if (target.dataset.route) routeTo(target.dataset.route);
@@ -1523,6 +1568,11 @@ document.addEventListener("click", (event) => {
   if (target.dataset.clearReviewSummary !== undefined) setState({ reviewSummary: null });
 
   if (target.dataset.calendarDay) setState({ modal: { type: "dailyReview", day: target.dataset.calendarDay } });
+
+  if (target.dataset.calendarGroup) {
+    const [day, textId] = target.dataset.calendarGroup.split("|");
+    setState({ modal: { type: "dailyReview", day, textId } });
+  }
 
   if (target.dataset.rate) rateCard(target.dataset.rate);
 
