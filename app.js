@@ -5,6 +5,7 @@ const initialState = {
   sourceIntents: [],
   chunks: [],
   cards: [],
+  images: [],
   reviews: [],
   route: "home",
   selectedTextId: null,
@@ -40,6 +41,7 @@ const initialState = {
     original: false,
     rewritten: true,
     translation: true,
+    images: false,
   },
   exportMessage: "",
   exportPreview: "",
@@ -571,6 +573,10 @@ function cardLabel(card) {
   return chunk?.selectedText || card.answer || card.clozeText || "Untitled card";
 }
 
+function imagesForText(textId) {
+  return state.images.filter((image) => image.textId === textId);
+}
+
 function filteredTexts() {
   return state.texts
     .filter((item) => {
@@ -596,6 +602,7 @@ function exportOptions() {
     original: Boolean(state.exportOptions?.original),
     rewritten: state.exportOptions?.rewritten !== false,
     translation: state.exportOptions?.translation !== false,
+    images: Boolean(state.exportOptions?.images),
   };
 }
 
@@ -608,13 +615,30 @@ function selectedExportTexts() {
 
 function formatExportText(text, options) {
   const fields = [];
+  const images = imagesForText(text.id);
   if (options.format === "markdown") {
     if (options.title) fields.push(`## ${text.title || "Untitled"}`);
     if (options.date) fields.push(`**Date:** ${formatPlainDate(text.sourceDate) || "-"}`);
     if (options.original) fields.push(`**Original**\n\n${text.originalText || "-"}`);
     if (options.rewritten) fields.push(`**Rewrite**\n\n${text.rewrittenText || "-"}`);
     if (options.translation) fields.push(`**Translation**\n\n${text.translation || "-"}`);
+    if (options.images && images.length) fields.push(`**Images**\n\n${images.map((image, index) => `![${image.name || `image-${index + 1}`}](${image.dataUrl})`).join("\n\n")}`);
     return fields.join("\n\n");
+  }
+
+  if (options.format === "html") {
+    const html = [];
+    html.push(`<article class="oio-export-item">`);
+    if (options.title) html.push(`<h2>${escapeHtml(text.title || "Untitled")}</h2>`);
+    if (options.date) html.push(`<p><strong>Date:</strong> ${escapeHtml(formatPlainDate(text.sourceDate) || "-")}</p>`);
+    if (options.original) html.push(`<section><h3>Original</h3><p>${escapeHtml(text.originalText || "-").replaceAll("\n", "<br>")}</p></section>`);
+    if (options.rewritten) html.push(`<section><h3>Rewrite</h3><p>${escapeHtml(text.rewrittenText || "-").replaceAll("\n", "<br>")}</p></section>`);
+    if (options.translation) html.push(`<section><h3>Translation</h3><p>${escapeHtml(text.translation || "-").replaceAll("\n", "<br>")}</p></section>`);
+    if (options.images && images.length) {
+      html.push(`<section><h3>Images</h3><div class="oio-export-images">${images.map((image) => `<figure><img src="${image.dataUrl}" alt="${escapeHtml(image.name || "image")}" /><figcaption>${escapeHtml(image.name || "image")}</figcaption></figure>`).join("")}</div></section>`);
+    }
+    html.push(`</article>`);
+    return html.join("\n");
   }
 
   if (options.title) fields.push(text.title || "Untitled");
@@ -622,10 +646,35 @@ function formatExportText(text, options) {
   if (options.original) fields.push(`Original:\n${text.originalText || "-"}`);
   if (options.rewritten) fields.push(`Rewrite:\n${text.rewrittenText || "-"}`);
   if (options.translation) fields.push(`Translation:\n${text.translation || "-"}`);
+  if (options.images && images.length) fields.push(`Images:\n${images.map((image) => `- ${image.name || "image"}`).join("\n")}`);
   return fields.join("\n\n");
 }
 
 function buildTextExport(texts, options = exportOptions()) {
+  if (options.format === "html") {
+    return `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OIO Export</title>
+  <style>
+    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 860px; margin: 32px auto; padding: 0 18px; line-height: 1.65; color: #22242a; background: #fffdf8; }
+    .oio-export-item { border-bottom: 1px solid #d9d8cf; padding: 0 0 28px; margin: 0 0 28px; }
+    h2 { margin: 0 0 10px; }
+    h3 { margin: 18px 0 6px; font-size: 16px; }
+    p { white-space: normal; }
+    .oio-export-images { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-top: 10px; }
+    figure { margin: 0; border: 1px solid #d9d8cf; border-radius: 8px; padding: 8px; background: #f7f5ef; }
+    img { display: block; width: 100%; height: auto; border-radius: 6px; }
+    figcaption { margin-top: 6px; color: #6a717c; font-size: 13px; }
+  </style>
+</head>
+<body>
+${texts.map((text) => formatExportText(text, options)).join("\n\n")}
+</body>
+</html>`;
+  }
   return texts.map((text) => formatExportText(text, options)).join(options.format === "markdown" ? "\n\n---\n\n" : "\n\n==========\n\n");
 }
 
@@ -778,7 +827,7 @@ function renderTextExportPanel(texts) {
       <div class="section-head">
         <div>
           <h3>批量导出</h3>
-          <p class="subtle">选择文本后复制成 Markdown 或纯文本，后面可以接按组导出图片。</p>
+          <p class="subtle">选择文本后复制成 Markdown、HTML 或纯文本，图片可作为附件一起带出。</p>
         </div>
         <div class="toolbar">
           <button type="button" class="secondary" data-select-visible-texts ${texts.length ? "" : "disabled"}>选择当前筛选</button>
@@ -789,6 +838,7 @@ function renderTextExportPanel(texts) {
         <label>格式
           <select id="exportFormat">
             <option value="markdown" ${options.format === "markdown" ? "selected" : ""}>Markdown</option>
+            <option value="html" ${options.format === "html" ? "selected" : ""}>HTML</option>
             <option value="plain" ${options.format === "plain" ? "selected" : ""}>纯文本</option>
           </select>
         </label>
@@ -798,6 +848,7 @@ function renderTextExportPanel(texts) {
           ["original", "原文"],
           ["rewritten", "改写"],
           ["translation", "翻译"],
+          ["images", "图片"],
         ]
           .map(
             ([key, label]) => `
@@ -997,6 +1048,7 @@ function renderTextDetail() {
 
   const chunks = chunksForText(text.id);
   const cards = cardsForText(text.id);
+  const images = imagesForText(text.id);
 
   return `
     <div class="topbar">
@@ -1024,6 +1076,19 @@ function renderTextDetail() {
         }
       </section>
       <aside class="grid">
+        <div class="panel">
+          <div class="section-head">
+            <div>
+              <h3>图片</h3>
+              <p class="subtle">${images.length ? `${images.length} 张语境图片` : "可以上传截图、照片或材料页。"}</p>
+            </div>
+          </div>
+          <label class="image-upload">
+            <input type="file" accept="image/*" multiple data-upload-images="${text.id}" />
+            <span>上传图片</span>
+          </label>
+          ${images.length ? renderImageGrid(images) : `<div class="empty compact-empty">还没有图片。</div>`}
+        </div>
         ${
           text.originalText
             ? `<div class="panel">
@@ -1059,6 +1124,28 @@ function renderTextDetail() {
           </div>
         </div>
       </aside>
+    </div>
+  `;
+}
+
+function renderImageGrid(images) {
+  return `
+    <div class="image-grid">
+      ${images
+        .map(
+          (image) => `
+            <div class="image-tile">
+              <button type="button" class="image-thumb" data-view-image="${image.id}">
+                <img src="${image.dataUrl}" alt="${escapeHtml(image.name)}" />
+              </button>
+              <div class="image-meta">
+                <span title="${escapeHtml(image.name)}">${escapeHtml(image.name || "image")}</span>
+                <button type="button" class="ghost danger small" data-delete-image="${image.id}">删除</button>
+              </div>
+            </div>
+          `,
+        )
+        .join("")}
     </div>
   `;
 }
@@ -1291,6 +1378,7 @@ function renderReviewSession() {
   const text = state.texts.find((item) => item.id === card.textId);
   const chunk = state.chunks.find((item) => item.id === card.chunkId);
   const sourceIntent = sourceIntentFor(card.sourceIntentId || chunk?.sourceIntentId);
+  const images = text ? imagesForText(text.id) : [];
   const progress = `${state.reviewIndex + 1} / ${state.reviewQueue.length}`;
 
   return `
@@ -1339,6 +1427,7 @@ function renderReviewSession() {
       <section class="muted-box review-context-box">
         <p class="subtle">上下文</p>
         <div class="review-context">${renderSafeContext(text?.rewrittenText || card.sentence, card)}</div>
+        ${images.length ? `<div class="review-image-strip">${images.map((image) => `<button type="button" class="review-image-thumb" data-view-image="${image.id}"><img src="${image.dataUrl}" alt="${escapeHtml(image.name)}" /></button>`).join("")}</div>` : ""}
       </section>
       ${
         text?.originalText
@@ -1366,7 +1455,27 @@ function renderModal() {
   if (state.modal.type === "sourceIntent") return renderSourceIntentModal();
   if (state.modal.type === "cloze") return renderClozeModal();
   if (state.modal.type === "dailyReview") return renderDailyReviewModal();
+  if (state.modal.type === "imagePreview") return renderImagePreviewModal();
   return "";
+}
+
+function renderImagePreviewModal() {
+  const image = state.images.find((item) => item.id === state.modal.imageId);
+  if (!image) return "";
+  return `
+    <div class="modal">
+      <div class="modal-box image-preview-modal">
+        <div class="section-head">
+          <div>
+            <h3>${escapeHtml(image.name || "图片")}</h3>
+            <p class="subtle">${formatDate(image.createdAt)}</p>
+          </div>
+          <button type="button" class="secondary" data-close-modal>关闭</button>
+        </div>
+        <img class="image-preview" src="${image.dataUrl}" alt="${escapeHtml(image.name)}" />
+      </div>
+    </div>
+  `;
 }
 
 function renderDailyReviewModal() {
@@ -1661,7 +1770,7 @@ function render() {
 }
 
 document.addEventListener("click", (event) => {
-  const target = event.target.closest("[data-route], [data-open-modal], [data-close-modal], [data-view-text], [data-edit-text], [data-delete-text], [data-create-chunk], [data-open-cloze], [data-token-index], [data-delete-chunk], [data-delete-card], [data-start-review], [data-continue-review], [data-cleanup-familiar], [data-clear-review-summary], [data-calendar-day], [data-calendar-group], [data-select-visible-texts], [data-clear-export-selection], [data-copy-text-export], [data-rate], [data-stop-review], [data-save-source-intent], [data-finish-source-intents], [data-toggle-source-text], [data-open-source-intents], [data-prompt-style], [data-prompt-ielts-skill], [data-copy-prompt], [data-open-chatgpt], [data-copy-modal-prompt], [data-parse-ai-output]");
+  const target = event.target.closest("[data-route], [data-open-modal], [data-close-modal], [data-view-text], [data-edit-text], [data-delete-text], [data-create-chunk], [data-open-cloze], [data-token-index], [data-delete-chunk], [data-delete-card], [data-delete-image], [data-view-image], [data-start-review], [data-continue-review], [data-cleanup-familiar], [data-clear-review-summary], [data-calendar-day], [data-calendar-group], [data-select-visible-texts], [data-clear-export-selection], [data-copy-text-export], [data-rate], [data-stop-review], [data-save-source-intent], [data-finish-source-intents], [data-toggle-source-text], [data-open-source-intents], [data-prompt-style], [data-prompt-ielts-skill], [data-copy-prompt], [data-open-chatgpt], [data-copy-modal-prompt], [data-parse-ai-output]");
   if (!target) return;
 
   if (target.dataset.route) routeTo(target.dataset.route);
@@ -1695,6 +1804,10 @@ document.addEventListener("click", (event) => {
   if (target.dataset.deleteChunk) deleteChunk(target.dataset.deleteChunk);
 
   if (target.dataset.deleteCard) deleteCard(target.dataset.deleteCard);
+
+  if (target.dataset.deleteImage) deleteImage(target.dataset.deleteImage);
+
+  if (target.dataset.viewImage) setState({ modal: { type: "imagePreview", imageId: target.dataset.viewImage } });
 
   if (target.dataset.startReview) startReview(target.dataset.startReview);
 
@@ -1737,6 +1850,11 @@ document.addEventListener("click", (event) => {
 });
 
 function handleLiveInput(event) {
+  if (event.target.dataset.uploadImages) {
+    uploadImages(event.target.dataset.uploadImages, event.target.files);
+    event.target.value = "";
+    return;
+  }
   if (event.target.id === "searchInput") setSearch(event.target.value, event.target.selectionStart);
   if (event.target.id === "searchMode") setState({ searchMode: event.target.value });
   if (event.target.id === "promptDraft") {
@@ -2058,8 +2176,41 @@ function deleteText(id) {
     sourceIntents: state.sourceIntents.filter((item) => item.textId !== id),
     chunks: state.chunks.filter((item) => item.textId !== id),
     cards: state.cards.filter((item) => item.textId !== id),
+    images: state.images.filter((item) => item.textId !== id),
     route: "home",
   });
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+async function uploadImages(textId, fileList) {
+  const files = [...(fileList || [])].filter((file) => file.type.startsWith("image/"));
+  if (!files.length) return;
+  if (files.some((file) => file.size > 1024 * 1024)) {
+    alert("有图片超过 1MB，第一版会照常保存，但 localStorage 可能会变大。");
+  }
+  const images = await Promise.all(
+    files.map(async (file) => ({
+      id: uid("image"),
+      textId,
+      name: file.name || "image",
+      dataUrl: await readFileAsDataUrl(file),
+      createdAt: nowIso(),
+    })),
+  );
+  setState({ images: [...state.images, ...images] });
+}
+
+function deleteImage(id) {
+  if (!confirm("删除这张图片？")) return;
+  setState({ images: state.images.filter((image) => image.id !== id), modal: state.modal?.imageId === id ? null : state.modal });
 }
 
 function deleteChunk(id) {
