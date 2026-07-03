@@ -45,6 +45,7 @@ const initialState = {
   exportPreview: "",
   modal: null,
   search: "",
+  searchMode: "all",
 };
 
 let state = loadState();
@@ -69,6 +70,16 @@ function setState(patch) {
   state = { ...state, ...patch };
   persist();
   render();
+}
+
+function setSearch(value, cursorPosition) {
+  state = { ...state, search: value };
+  render();
+  const input = document.querySelector("#searchInput");
+  if (!input) return;
+  input.focus();
+  const cursor = Number.isFinite(cursorPosition) ? cursorPosition : value.length;
+  input.setSelectionRange(cursor, cursor);
 }
 
 function uid(prefix) {
@@ -565,10 +576,14 @@ function filteredTexts() {
     .filter((item) => {
       const q = state.search.trim().toLowerCase();
       if (!q) return true;
-      return [item.title, item.rewrittenText, item.originalText, item.tags?.join(" ")]
-        .join(" ")
-        .toLowerCase()
-        .includes(q);
+      const tags = (item.tags || []).join(" ");
+      const searchable = {
+        all: [item.title, item.rewrittenText, item.originalText, item.translation, item.note, tags],
+        tags: [tags],
+        text: [item.rewrittenText, item.originalText, item.translation, item.note],
+        title: [item.title],
+      };
+      return (searchable[state.searchMode] || searchable.all).join(" ").toLowerCase().includes(q);
     })
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
@@ -727,10 +742,19 @@ function renderHome() {
       </section>
     </div>
 
-    <div class="panel" style="margin-top: 16px;">
+    <div class="panel search-panel" style="margin-top: 16px;">
       <label>
-        搜索文本、标签或内容
+        搜索
         <input id="searchInput" value="${escapeHtml(state.search)}" placeholder="输入关键词" />
+      </label>
+      <label>
+        搜索范围
+        <select id="searchMode">
+          <option value="all" ${state.searchMode === "all" ? "selected" : ""}>全部</option>
+          <option value="tags" ${state.searchMode === "tags" ? "selected" : ""}>标签</option>
+          <option value="text" ${state.searchMode === "text" ? "selected" : ""}>文本</option>
+          <option value="title" ${state.searchMode === "title" ? "selected" : ""}>标题</option>
+        </select>
       </label>
     </div>
 
@@ -1713,7 +1737,8 @@ document.addEventListener("click", (event) => {
 });
 
 function handleLiveInput(event) {
-  if (event.target.id === "searchInput") setState({ search: event.target.value });
+  if (event.target.id === "searchInput") setSearch(event.target.value, event.target.selectionStart);
+  if (event.target.id === "searchMode") setState({ searchMode: event.target.value });
   if (event.target.id === "promptDraft") {
     state = { ...state, promptDraft: event.target.value, promptCopied: "" };
   }
