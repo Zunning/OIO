@@ -32,6 +32,17 @@ const initialState = {
   promptEmoji: "allow",
   promptDraft: "",
   promptCopied: "",
+  exportTextIds: [],
+  exportOptions: {
+    format: "markdown",
+    title: true,
+    date: true,
+    original: false,
+    rewritten: true,
+    translation: true,
+  },
+  exportMessage: "",
+  exportPreview: "",
   modal: null,
   search: "",
 };
@@ -50,7 +61,7 @@ function loadState() {
 }
 
 function persist() {
-  const { route, selectedTextId, selectedChunkId, reviewQueue, reviewIndex, reviewMode, activeSessionCardIds, sessionResults, reviewSummary, showAnswer, reviewInput, reviewChecked, reviewCorrect, showSourceText, promptMode, promptStyle, promptVariant, promptLevel, promptIeltsSkill, promptIeltsBand, promptEmoji, promptDraft, promptCopied, modal, search, ...data } = state;
+  const { route, selectedTextId, selectedChunkId, reviewQueue, reviewIndex, reviewMode, activeSessionCardIds, sessionResults, reviewSummary, showAnswer, reviewInput, reviewChecked, reviewCorrect, showSourceText, promptMode, promptStyle, promptVariant, promptLevel, promptIeltsSkill, promptIeltsBand, promptEmoji, promptDraft, promptCopied, exportTextIds, exportMessage, exportPreview, modal, search, ...data } = state;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
 }
 
@@ -549,6 +560,60 @@ function cardLabel(card) {
   return chunk?.selectedText || card.answer || card.clozeText || "Untitled card";
 }
 
+function filteredTexts() {
+  return state.texts
+    .filter((item) => {
+      const q = state.search.trim().toLowerCase();
+      if (!q) return true;
+      return [item.title, item.rewrittenText, item.originalText, item.tags?.join(" ")]
+        .join(" ")
+        .toLowerCase()
+        .includes(q);
+    })
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+function exportOptions() {
+  return {
+    format: state.exportOptions?.format || "markdown",
+    title: state.exportOptions?.title !== false,
+    date: state.exportOptions?.date !== false,
+    original: Boolean(state.exportOptions?.original),
+    rewritten: state.exportOptions?.rewritten !== false,
+    translation: state.exportOptions?.translation !== false,
+  };
+}
+
+function selectedExportTexts() {
+  const selected = new Set(state.exportTextIds || []);
+  return state.texts
+    .filter((text) => selected.has(text.id))
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+function formatExportText(text, options) {
+  const fields = [];
+  if (options.format === "markdown") {
+    if (options.title) fields.push(`## ${text.title || "Untitled"}`);
+    if (options.date) fields.push(`**Date:** ${formatPlainDate(text.sourceDate) || "-"}`);
+    if (options.original) fields.push(`**Original**\n\n${text.originalText || "-"}`);
+    if (options.rewritten) fields.push(`**Rewrite**\n\n${text.rewrittenText || "-"}`);
+    if (options.translation) fields.push(`**Translation**\n\n${text.translation || "-"}`);
+    return fields.join("\n\n");
+  }
+
+  if (options.title) fields.push(text.title || "Untitled");
+  if (options.date) fields.push(`Date: ${formatPlainDate(text.sourceDate) || "-"}`);
+  if (options.original) fields.push(`Original:\n${text.originalText || "-"}`);
+  if (options.rewritten) fields.push(`Rewrite:\n${text.rewrittenText || "-"}`);
+  if (options.translation) fields.push(`Translation:\n${text.translation || "-"}`);
+  return fields.join("\n\n");
+}
+
+function buildTextExport(texts, options = exportOptions()) {
+  return texts.map((text) => formatExportText(text, options)).join(options.format === "markdown" ? "\n\n---\n\n" : "\n\n==========\n\n");
+}
+
 function reviewGroupsForDate(day) {
   const groups = new Map();
   reviewsForDate(day).forEach((review) => {
@@ -629,16 +694,7 @@ function renderHome() {
   const todaysReviews = todayReviews();
   const againCount = todaysReviews.filter((review) => review.rating === "again").length;
   const easyCount = todaysReviews.filter((review) => review.rating === "easy").length;
-  const texts = state.texts
-    .filter((item) => {
-      const q = state.search.trim().toLowerCase();
-      if (!q) return true;
-      return [item.title, item.rewrittenText, item.originalText, item.tags.join(" ")]
-        .join(" ")
-        .toLowerCase()
-        .includes(q);
-    })
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const texts = filteredTexts();
 
   return `
     <div class="topbar">
@@ -678,6 +734,8 @@ function renderHome() {
       </label>
     </div>
 
+    ${renderTextExportPanel(texts)}
+
     <div class="grid" style="margin-top: 16px;">
       ${
         texts.length
@@ -685,6 +743,55 @@ function renderHome() {
           : `<div class="empty">还没有文本。先粘贴一段 AI 改写后的英文，OIO 就有第一块地基了。</div>`
       }
     </div>
+  `;
+}
+
+function renderTextExportPanel(texts) {
+  const selectedCount = selectedExportTexts().length;
+  const options = exportOptions();
+  return `
+    <section class="panel export-panel">
+      <div class="section-head">
+        <div>
+          <h3>批量导出</h3>
+          <p class="subtle">选择文本后复制成 Markdown 或纯文本，后面可以接按组导出图片。</p>
+        </div>
+        <div class="toolbar">
+          <button type="button" class="secondary" data-select-visible-texts ${texts.length ? "" : "disabled"}>选择当前筛选</button>
+          <button type="button" class="ghost" data-clear-export-selection ${selectedCount ? "" : "disabled"}>清空选择</button>
+        </div>
+      </div>
+      <div class="export-options">
+        <label>格式
+          <select id="exportFormat">
+            <option value="markdown" ${options.format === "markdown" ? "selected" : ""}>Markdown</option>
+            <option value="plain" ${options.format === "plain" ? "selected" : ""}>纯文本</option>
+          </select>
+        </label>
+        ${[
+          ["title", "标题"],
+          ["date", "日期"],
+          ["original", "原文"],
+          ["rewritten", "改写"],
+          ["translation", "翻译"],
+        ]
+          .map(
+            ([key, label]) => `
+              <label class="checkbox-line">
+                <input type="checkbox" data-export-option="${key}" ${options[key] ? "checked" : ""} />
+                <span>${label}</span>
+              </label>
+            `,
+          )
+          .join("")}
+      </div>
+      <div class="toolbar" style="margin-top: 12px;">
+        <button type="button" data-copy-text-export ${selectedCount ? "" : "disabled"}>复制导出内容</button>
+        <span class="subtle">已选择 ${selectedCount} 篇</span>
+        ${state.exportMessage ? `<span class="subtle">${escapeHtml(state.exportMessage)}</span>` : ""}
+      </div>
+      ${state.exportPreview ? `<textarea class="export-preview" readonly>${escapeHtml(state.exportPreview)}</textarea>` : ""}
+    </section>
   `;
 }
 
@@ -831,17 +938,23 @@ function renderPrompts() {
 function renderTextItem(item) {
   const chunkCount = chunksForText(item.id).length;
   const cardCount = cardsForText(item.id).length;
+  const selected = (state.exportTextIds || []).includes(item.id);
   return `
     <article class="item">
       <div class="row">
-        <div>
-          <h3>${escapeHtml(item.title)}</h3>
-          <p class="subtle">${formatPlainDate(item.sourceDate)}${item.sourceDate ? " · " : ""}${escapeHtml(item.rewrittenText.slice(0, 180))}${item.rewrittenText.length > 180 ? "..." : ""}</p>
-          <div class="chips">
-            <span class="chip">${item.textType || "dialogue"}</span>
-            <span class="chip">${chunkCount} chunks</span>
-            <span class="chip">${cardCount} cards</span>
-            ${item.tags.map((tag) => `<span class="chip">${escapeHtml(tag)}</span>`).join("")}
+        <div class="selectable-title">
+          <label class="text-select" title="选择用于批量导出">
+            <input type="checkbox" data-export-text="${item.id}" ${selected ? "checked" : ""} />
+          </label>
+          <div>
+            <h3>${escapeHtml(item.title)}</h3>
+            <p class="subtle">${formatPlainDate(item.sourceDate)}${item.sourceDate ? " · " : ""}${escapeHtml(item.rewrittenText.slice(0, 180))}${item.rewrittenText.length > 180 ? "..." : ""}</p>
+            <div class="chips">
+              <span class="chip">${item.textType || "dialogue"}</span>
+              <span class="chip">${chunkCount} chunks</span>
+              <span class="chip">${cardCount} cards</span>
+              ${(item.tags || []).map((tag) => `<span class="chip">${escapeHtml(tag)}</span>`).join("")}
+            </div>
           </div>
         </div>
         <div class="toolbar">
@@ -1524,7 +1637,7 @@ function render() {
 }
 
 document.addEventListener("click", (event) => {
-  const target = event.target.closest("[data-route], [data-open-modal], [data-close-modal], [data-view-text], [data-edit-text], [data-delete-text], [data-create-chunk], [data-open-cloze], [data-token-index], [data-delete-chunk], [data-delete-card], [data-start-review], [data-continue-review], [data-cleanup-familiar], [data-clear-review-summary], [data-calendar-day], [data-calendar-group], [data-rate], [data-stop-review], [data-save-source-intent], [data-finish-source-intents], [data-toggle-source-text], [data-open-source-intents], [data-prompt-style], [data-prompt-ielts-skill], [data-copy-prompt], [data-open-chatgpt], [data-copy-modal-prompt], [data-parse-ai-output]");
+  const target = event.target.closest("[data-route], [data-open-modal], [data-close-modal], [data-view-text], [data-edit-text], [data-delete-text], [data-create-chunk], [data-open-cloze], [data-token-index], [data-delete-chunk], [data-delete-card], [data-start-review], [data-continue-review], [data-cleanup-familiar], [data-clear-review-summary], [data-calendar-day], [data-calendar-group], [data-select-visible-texts], [data-clear-export-selection], [data-copy-text-export], [data-rate], [data-stop-review], [data-save-source-intent], [data-finish-source-intents], [data-toggle-source-text], [data-open-source-intents], [data-prompt-style], [data-prompt-ielts-skill], [data-copy-prompt], [data-open-chatgpt], [data-copy-modal-prompt], [data-parse-ai-output]");
   if (!target) return;
 
   if (target.dataset.route) routeTo(target.dataset.route);
@@ -1574,6 +1687,16 @@ document.addEventListener("click", (event) => {
     setState({ modal: { type: "dailyReview", day, textId } });
   }
 
+  if (target.dataset.selectVisibleTexts !== undefined) {
+    setState({ exportTextIds: filteredTexts().map((text) => text.id), exportMessage: "", exportPreview: "" });
+  }
+
+  if (target.dataset.clearExportSelection !== undefined) {
+    setState({ exportTextIds: [], exportMessage: "", exportPreview: "" });
+  }
+
+  if (target.dataset.copyTextExport !== undefined) copyTextExport();
+
   if (target.dataset.rate) rateCard(target.dataset.rate);
 
   if (target.dataset.stopReview !== undefined) setState({ reviewQueue: [], reviewIndex: 0, showAnswer: false, reviewInput: "", reviewChecked: false, reviewCorrect: false });
@@ -1614,6 +1737,19 @@ function handleLiveInput(event) {
   }
   if (event.target.id === "reviewSessionSize") {
     setState({ reviewSettings: { ...reviewSettings(), sessionSize: Number(event.target.value) || 7 } });
+  }
+  if (event.target.id === "exportFormat") {
+    setState({ exportOptions: { ...exportOptions(), format: event.target.value }, exportMessage: "", exportPreview: "" });
+  }
+  if (event.target.dataset.exportOption) {
+    setState({ exportOptions: { ...exportOptions(), [event.target.dataset.exportOption]: event.target.checked }, exportMessage: "", exportPreview: "" });
+  }
+  if (event.target.dataset.exportText) {
+    const id = event.target.dataset.exportText;
+    const selected = new Set(state.exportTextIds || []);
+    if (event.target.checked) selected.add(id);
+    else selected.delete(id);
+    setState({ exportTextIds: [...selected], exportMessage: "", exportPreview: "" });
   }
   if (["modalPromptStyle", "modalPromptMode", "modalPromptVariant", "modalPromptLevel", "modalPromptIeltsSkill", "modalPromptIeltsBand", "modalPromptEmoji"].includes(event.target.id)) {
     const keyMap = {
@@ -1678,6 +1814,25 @@ async function copyPrompt(mode) {
     setState({ promptCopied: "已复制。去 ChatGPT 粘贴就行。" });
   } catch {
     setState({ promptCopied: "复制失败，可以手动选中右侧提示词复制。" });
+  }
+}
+
+async function copyTextExport() {
+  const texts = selectedExportTexts();
+  if (!texts.length) {
+    setState({ exportMessage: "先选择要导出的文本。", exportPreview: "" });
+    return;
+  }
+  const output = buildTextExport(texts);
+  if (!output.trim()) {
+    setState({ exportMessage: "至少选择一个导出字段。", exportPreview: "" });
+    return;
+  }
+  try {
+    await copyText(output);
+    setState({ exportMessage: `已复制 ${texts.length} 篇文本。`, exportPreview: output });
+  } catch {
+    setState({ exportMessage: "复制失败，可以手动复制下方预览。", exportPreview: output });
   }
 }
 

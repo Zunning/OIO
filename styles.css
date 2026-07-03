@@ -258,6 +258,49 @@ label {
   width: auto;
 }
 
+.export-panel {
+  margin-top: 16px;
+}
+
+.export-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  align-items: center;
+  margin-top: 14px;
+}
+
+.export-options > label:first-child {
+  width: 180px;
+}
+
+.export-preview {
+  min-height: 180px;
+  margin-top: 12px;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 13px;
+}
+
+.selectable-title {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  min-width: 0;
+}
+
+.text-select {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 32px;
+  margin-top: 1px;
+}
+
+.text-select input {
+  width: auto;
+}
+
 .segmented {
   display: flex;
   flex-wrap: wrap;
