@@ -464,11 +464,20 @@ function expandSelectionToWord(fullText, selected) {
 
 function dueCards() {
   const now = Date.now();
-  return state.cards.filter((card) => new Date(card.dueAt).getTime() <= now);
+  return state.cards.filter((card) => !isGraduatedCard(card) && new Date(card.dueAt).getTime() <= now);
 }
 
 function cardsForText(textId) {
   return state.cards.filter((card) => card.textId === textId);
+}
+
+function successfulReviewCount(card) {
+  if (Number.isFinite(card.masteryCount)) return card.masteryCount;
+  return state.reviews.filter((review) => review.cardId === card.id && review.rating !== "again").length;
+}
+
+function isGraduatedCard(card) {
+  return Boolean(card.isGraduated) || successfulReviewCount(card) >= 3;
 }
 
 function chunksForText(textId) {
@@ -870,12 +879,14 @@ function renderCards() {
 function renderCardItem(card) {
   const text = state.texts.find((item) => item.id === card.textId);
   const sourceIntent = sourceIntentFor(card.sourceIntentId);
+  const masteryCount = successfulReviewCount(card);
+  const reviewStatus = isGraduatedCard(card) ? "已毕业" : `掌握 ${masteryCount}/3`;
   return `
     <article class="item">
       <p class="cloze">${escapeHtml(card.clozeText)}</p>
       <p class="answer">${escapeHtml(card.answer)}</p>
       ${sourceIntent ? `<p class="subtle">原始意图：${escapeHtml(sourceIntent.note)}</p>` : ""}
-      <p class="subtle">来源：${escapeHtml(text?.title || "未知文本")} · 下次：${formatDate(card.dueAt)} · 复习 ${card.reviewCount} 次</p>
+      <p class="subtle">来源：${escapeHtml(text?.title || "未知文本")} · ${reviewStatus} · 下次：${formatDate(card.dueAt)} · 复习 ${card.reviewCount || 0} 次</p>
       <div class="toolbar" style="margin-top: 12px;">
         <button class="secondary" data-view-text="${card.textId}">回到语境</button>
         <button class="ghost danger" data-delete-card="${card.id}">删除</button>
@@ -1550,6 +1561,9 @@ function saveCard(form) {
     hint: "",
     focusNote: form.get("focusNote").trim(),
     reviewCount: 0,
+    masteryCount: 0,
+    isGraduated: false,
+    graduatedAt: "",
     dueAt: nowIso(),
     lastReviewedAt: "",
     createdAt: nowIso(),
@@ -1612,14 +1626,7 @@ function rateCard(rating) {
   const minutes = rating === "again" ? 10 : rating === "good" ? 24 * 60 : 3 * 24 * 60;
   const dueAt = new Date(Date.now() + minutes * 60 * 1000).toISOString();
   const updatedCards = state.cards.map((item) =>
-    item.id === card.id
-      ? {
-          ...item,
-          dueAt,
-          lastReviewedAt: nowIso(),
-          reviewCount: item.reviewCount + 1,
-        }
-      : item,
+    item.id === card.id ? updateReviewedCard(item, rating, dueAt) : item,
   );
   const reviews = [
     ...state.reviews,
@@ -1642,6 +1649,20 @@ function rateCard(rating) {
     reviewChecked: false,
     reviewCorrect: false,
   });
+}
+
+function updateReviewedCard(card, rating, dueAt) {
+  const masteryCount = successfulReviewCount(card) + (rating === "again" ? 0 : 1);
+  const isGraduated = masteryCount >= 3;
+  return {
+    ...card,
+    dueAt,
+    lastReviewedAt: nowIso(),
+    reviewCount: (card.reviewCount || 0) + 1,
+    masteryCount,
+    isGraduated,
+    graduatedAt: isGraduated && !card.graduatedAt ? nowIso() : card.graduatedAt || "",
+  };
 }
 
 render();
