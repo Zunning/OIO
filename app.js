@@ -577,6 +577,19 @@ function imagesForText(textId) {
   return state.images.filter((image) => image.textId === textId);
 }
 
+function boundSourceIntentIds(textId, exceptChunkId = "") {
+  return new Set(
+    state.chunks
+      .filter((chunk) => chunk.textId === textId && chunk.id !== exceptChunkId && chunk.sourceIntentId)
+      .map((chunk) => chunk.sourceIntentId),
+  );
+}
+
+function availableSourceIntentsForChunk(chunk) {
+  const bound = boundSourceIntentIds(chunk.textId, chunk.id);
+  return sourceIntentsForText(chunk.textId).filter((intent) => intent.id === chunk.sourceIntentId || !bound.has(intent.id));
+}
+
 function filteredTexts() {
   return state.texts
     .filter((item) => {
@@ -676,6 +689,24 @@ ${texts.map((text) => formatExportText(text, options)).join("\n\n")}
 </html>`;
   }
   return texts.map((text) => formatExportText(text, options)).join(options.format === "markdown" ? "\n\n---\n\n" : "\n\n==========\n\n");
+}
+
+function exportFileInfo(options = exportOptions()) {
+  if (options.format === "html") return { extension: "html", type: "text/html;charset=utf-8" };
+  if (options.format === "markdown") return { extension: "md", type: "text/markdown;charset=utf-8" };
+  return { extension: "txt", type: "text/plain;charset=utf-8" };
+}
+
+function downloadTextFile(filename, content, type) {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 function reviewGroupsForDate(day) {
@@ -862,6 +893,7 @@ function renderTextExportPanel(texts) {
       </div>
       <div class="toolbar" style="margin-top: 12px;">
         <button type="button" data-copy-text-export ${selectedCount ? "" : "disabled"}>复制导出内容</button>
+        <button type="button" class="secondary" data-download-text-export ${selectedCount ? "" : "disabled"}>下载文件</button>
         <span class="subtle">已选择 ${selectedCount} 篇</span>
         ${state.exportMessage ? `<span class="subtle">${escapeHtml(state.exportMessage)}</span>` : ""}
       </div>
@@ -1454,6 +1486,7 @@ function renderReviewSession() {
 function renderModal() {
   if (state.modal.type === "text") return renderTextModal();
   if (state.modal.type === "sourceIntent") return renderSourceIntentModal();
+  if (state.modal.type === "sourceIntentMatch") return renderSourceIntentMatchModal();
   if (state.modal.type === "cloze") return renderClozeModal();
   if (state.modal.type === "dailyReview") return renderDailyReviewModal();
   if (state.modal.type === "imagePreview") return renderImagePreviewModal();
@@ -1712,11 +1745,49 @@ function renderSourceIntentItem(intent) {
   `;
 }
 
+function renderSourceIntentMatchModal() {
+  const chunk = state.chunks.find((item) => item.id === state.modal.chunkId);
+  if (!chunk) return "";
+  const text = state.texts.find((item) => item.id === chunk.textId);
+  const intents = availableSourceIntentsForChunk(chunk);
+  return `
+    <div class="modal">
+      <div class="modal-box">
+        <h3>这个 chunk 对应哪个原始意图？</h3>
+        <div class="muted-box">
+          <p><strong>${escapeHtml(chunk.selectedText)}</strong></p>
+          <p class="subtle">${escapeHtml(text?.title || "")}</p>
+        </div>
+        <div class="grid" style="margin-top: 14px;">
+          ${
+            intents.length
+              ? intents
+                  .map(
+                    (intent) => `
+                      <button type="button" class="mini-row" data-match-source-intent="${intent.id}">
+                        <span>${escapeHtml(intent.note || intent.selectedText)}</span>
+                        <strong>绑定</strong>
+                      </button>
+                    `,
+                  )
+                  .join("")
+              : `<div class="empty compact-empty">没有未绑定的原始意图了。</div>`
+          }
+        </div>
+        <div class="toolbar" style="margin-top: 14px;">
+          <button type="button" class="secondary" data-match-source-intent="">不绑定，直接挖空</button>
+          <button type="button" class="ghost" data-close-modal>取消</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function renderClozeModal() {
   const chunk = state.chunks.find((item) => item.id === state.modal.chunkId);
   if (!chunk) return "";
 
-  const intents = sourceIntentsForText(chunk.textId);
+  const intents = availableSourceIntentsForChunk(chunk);
   const defaultIntentId = chunk.sourceIntentId || (intents.length === 1 ? intents[0].id : "");
   const tokens = chunk.selectedText.match(/\S+/g) || [];
   const selectedIndexes = state.modal.selectedIndexes || [];
@@ -1785,7 +1856,7 @@ function render() {
 }
 
 document.addEventListener("click", (event) => {
-  const target = event.target.closest("[data-route], [data-open-modal], [data-close-modal], [data-view-text], [data-edit-text], [data-delete-text], [data-create-chunk], [data-open-cloze], [data-token-index], [data-delete-chunk], [data-delete-card], [data-delete-image], [data-remove-pending-image], [data-view-image], [data-start-review], [data-continue-review], [data-cleanup-familiar], [data-clear-review-summary], [data-calendar-day], [data-calendar-group], [data-select-visible-texts], [data-clear-export-selection], [data-copy-text-export], [data-rate], [data-stop-review], [data-save-source-intent], [data-finish-source-intents], [data-toggle-source-text], [data-open-source-intents], [data-prompt-style], [data-prompt-ielts-skill], [data-copy-prompt], [data-open-chatgpt], [data-copy-modal-prompt], [data-parse-ai-output]");
+  const target = event.target.closest("[data-route], [data-open-modal], [data-close-modal], [data-view-text], [data-edit-text], [data-delete-text], [data-create-chunk], [data-open-cloze], [data-match-source-intent], [data-token-index], [data-delete-chunk], [data-delete-card], [data-delete-image], [data-remove-pending-image], [data-view-image], [data-start-review], [data-continue-review], [data-cleanup-familiar], [data-clear-review-summary], [data-calendar-day], [data-calendar-group], [data-select-visible-texts], [data-clear-export-selection], [data-copy-text-export], [data-download-text-export], [data-rate], [data-stop-review], [data-save-source-intent], [data-finish-source-intents], [data-toggle-source-text], [data-open-source-intents], [data-prompt-style], [data-prompt-ielts-skill], [data-copy-prompt], [data-open-chatgpt], [data-copy-modal-prompt], [data-parse-ai-output]");
   if (!target) return;
 
   if (target.dataset.route) routeTo(target.dataset.route);
@@ -1813,6 +1884,8 @@ document.addEventListener("click", (event) => {
   if (target.dataset.createChunk) openChunkModal(target.dataset.createChunk);
 
   if (target.dataset.openCloze) setState({ modal: { type: "cloze", chunkId: target.dataset.openCloze, selectedIndexes: [] } });
+
+  if (target.dataset.matchSourceIntent !== undefined) matchSourceIntentAndOpenCloze(target.dataset.matchSourceIntent);
 
   if (target.dataset.tokenIndex !== undefined) toggleToken(Number(target.dataset.tokenIndex));
 
@@ -1850,6 +1923,8 @@ document.addEventListener("click", (event) => {
   }
 
   if (target.dataset.copyTextExport !== undefined) copyTextExport();
+
+  if (target.dataset.downloadTextExport !== undefined) downloadTextExport();
 
   if (target.dataset.rate) rateCard(target.dataset.rate);
 
@@ -1944,6 +2019,13 @@ function handleLiveInput(event) {
 document.addEventListener("input", handleLiveInput);
 document.addEventListener("change", handleLiveInput);
 
+document.addEventListener("dblclick", (event) => {
+  const target = event.target.closest("[data-token-index]");
+  if (!target) return;
+  event.preventDefault();
+  saveCardFromTokenIndexes([Number(target.dataset.tokenIndex)]);
+});
+
 document.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (event.target.id === "textForm") await saveText(new FormData(event.target));
@@ -1999,6 +2081,23 @@ async function copyTextExport() {
   } catch {
     setState({ exportMessage: "复制失败，可以手动复制下方预览。", exportPreview: output });
   }
+}
+
+function downloadTextExport() {
+  const texts = selectedExportTexts();
+  if (!texts.length) {
+    setState({ exportMessage: "先选择要导出的文本。", exportPreview: "" });
+    return;
+  }
+  const options = exportOptions();
+  const output = buildTextExport(texts, options);
+  if (!output.trim()) {
+    setState({ exportMessage: "至少选择一个导出字段。", exportPreview: "" });
+    return;
+  }
+  const file = exportFileInfo(options);
+  downloadTextFile(`oio-export-${todayDate()}.${file.extension}`, output, file.type);
+  setState({ exportMessage: `已下载 ${texts.length} 篇文本。`, exportPreview: output });
 }
 
 async function copyModalPrompt() {
@@ -2133,7 +2232,7 @@ function createChunkFromSelection(textId) {
   }
   const existing = state.chunks.find((item) => item.textId === textId && item.selectedText === selected);
   if (existing) {
-    setState({ modal: { type: "cloze", chunkId: existing.id, selectedIndexes: [] } });
+    openSourceIntentMatch(existing.id);
     return;
   }
 
@@ -2149,9 +2248,28 @@ function createChunkFromSelection(textId) {
     createdAt: nowIso(),
   };
   selection?.removeAllRanges();
+  const modal = sourceIntentsForText(chunk.textId).length ? { type: "sourceIntentMatch", chunkId: chunk.id } : { type: "cloze", chunkId: chunk.id, selectedIndexes: [] };
   setState({
     chunks: [...state.chunks, chunk],
-    modal: { type: "cloze", chunkId: chunk.id, selectedIndexes: [] },
+    modal,
+  });
+}
+
+function openSourceIntentMatch(chunkId) {
+  const chunk = state.chunks.find((item) => item.id === chunkId);
+  if (!chunk || !sourceIntentsForText(chunk.textId).length) {
+    setState({ modal: { type: "cloze", chunkId, selectedIndexes: [] } });
+    return;
+  }
+  setState({ modal: { type: "sourceIntentMatch", chunkId } });
+}
+
+function matchSourceIntentAndOpenCloze(sourceIntentId) {
+  if (!state.modal || state.modal.type !== "sourceIntentMatch") return;
+  const chunkId = state.modal.chunkId;
+  setState({
+    chunks: state.chunks.map((chunk) => (chunk.id === chunkId ? { ...chunk, sourceIntentId } : chunk)),
+    modal: { type: "cloze", chunkId, selectedIndexes: [] },
   });
 }
 
@@ -2164,19 +2282,50 @@ function toggleToken(index) {
 
 function saveCard(form) {
   const chunk = state.chunks.find((item) => item.id === state.modal.chunkId);
-  const sourceIntentId = form.get("sourceIntentId") || chunk.sourceIntentId || "";
+  saveCardData({
+    chunk,
+    sourceIntentId: form.get("sourceIntentId") || chunk.sourceIntentId || "",
+    clozeText: form.get("clozeText").trim(),
+    maskedChunk: form.get("maskedChunk") || "",
+    answer: form.get("answer").trim(),
+    focusNote: form.get("focusNote").trim(),
+    priority: form.get("priority") === "important" ? "important" : "normal",
+  });
+}
+
+function saveCardFromTokenIndexes(indexes) {
+  if (!state.modal || state.modal.type !== "cloze") return;
+  const chunk = state.chunks.find((item) => item.id === state.modal.chunkId);
+  if (!chunk) return;
+  const tokens = chunk.selectedText.match(/\S+/g) || [];
+  const selectedIndexes = indexes.filter((index) => index >= 0 && index < tokens.length);
+  if (!selectedIndexes.length) return;
+  const clozeData = clozeFromSelection(chunk.sentence, chunk.selectedText, selectedIndexes);
+  saveCardData({
+    chunk,
+    sourceIntentId: chunk.sourceIntentId || "",
+    clozeText: clozeData.clozeText,
+    maskedChunk: clozeData.maskedChunk,
+    answer: selectedIndexes.map((index) => tokens[index]).join(" "),
+    focusNote: "",
+    priority: "normal",
+  });
+}
+
+function saveCardData({ chunk, sourceIntentId, clozeText, maskedChunk, answer, focusNote, priority }) {
+  if (!chunk || !answer) return;
   const card = {
     id: uid("card"),
     textId: chunk.textId,
     chunkId: chunk.id,
     sourceIntentId,
     sentence: chunk.sentence,
-    clozeText: form.get("clozeText").trim(),
-    maskedChunk: form.get("maskedChunk") || "",
-    answer: form.get("answer").trim(),
+    clozeText,
+    maskedChunk,
+    answer,
     hint: "",
-    focusNote: form.get("focusNote").trim(),
-    priority: form.get("priority") === "important" ? "important" : "normal",
+    focusNote,
+    priority,
     reviewCount: 0,
     masteryCount: 0,
     easyStreak: 0,
