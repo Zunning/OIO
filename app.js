@@ -1018,6 +1018,12 @@ function renderTextModal() {
     emoji: state.modal.promptEmoji,
   });
   const modalOriginal = state.modal.originalText ?? item?.originalText ?? "";
+  const modalTitle = state.modal.title ?? item?.title ?? "";
+  const modalTextType = state.modal.textType ?? item?.textType ?? modalPromptStyle ?? "dialogue";
+  const modalRewrittenText = state.modal.rewrittenText ?? item?.rewrittenText ?? "";
+  const modalTranslation = state.modal.translation ?? item?.translation ?? "";
+  const modalNote = state.modal.note ?? item?.note ?? "";
+  const modalTags = state.modal.tags ?? item?.tags?.join(", ") ?? "";
   return `
     <div class="modal">
       <form class="modal-box" id="textForm">
@@ -1092,20 +1098,20 @@ function renderTextModal() {
             </div>
             ${state.modal.parseMessage ? `<p class="subtle">${escapeHtml(state.modal.parseMessage)}</p>` : ""}
           </div>
-          <label>标题<input name="title" required value="${escapeHtml(item?.title || "")}" /></label>
+          <label>标题<input name="title" required value="${escapeHtml(modalTitle)}" /></label>
           <label>文本类型
             <select name="textType">
               ${["story", "expression_set", "dialogue", "writing", "work", "casual", "other"]
-                .map((type) => `<option value="${type}" ${(item?.textType || modalPromptStyle || "dialogue") === type ? "selected" : ""}>${type}</option>`)
+                .map((type) => `<option value="${type}" ${modalTextType === type ? "selected" : ""}>${type}</option>`)
                 .join("")}
             </select>
           </label>
           <label>日期<input type="date" name="sourceDate" value="${escapeHtml(item?.sourceDate || todayDate())}" /></label>
           <label>原始输入，可选<textarea name="originalText">${escapeHtml(modalOriginal)}</textarea></label>
-          <label>英文改写，必填<textarea name="rewrittenText" required>${escapeHtml(item?.rewrittenText || "")}</textarea></label>
-          <label>中文翻译<textarea name="translation">${escapeHtml(item?.translation || "")}</textarea></label>
-          <label>备注<textarea name="note">${escapeHtml(item?.note || "")}</textarea></label>
-          <label>标签<input name="tags" value="${escapeHtml(item?.tags?.join(", ") || "")}" placeholder="daily, speaking" /></label>
+          <label>英文改写，必填<textarea name="rewrittenText" required>${escapeHtml(modalRewrittenText)}</textarea></label>
+          <label>中文翻译<textarea name="translation">${escapeHtml(modalTranslation)}</textarea></label>
+          <label>备注<textarea name="note">${escapeHtml(modalNote)}</textarea></label>
+          <label>标签<input name="tags" value="${escapeHtml(modalTags)}" placeholder="daily, speaking" /></label>
           <div class="toolbar">
             <button type="submit">保存</button>
             <button type="button" class="secondary" data-close-modal>取消</button>
@@ -1332,9 +1338,9 @@ function handleLiveInput(event) {
 document.addEventListener("input", handleLiveInput);
 document.addEventListener("change", handleLiveInput);
 
-document.addEventListener("submit", (event) => {
+document.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (event.target.id === "textForm") saveText(new FormData(event.target));
+  if (event.target.id === "textForm") await saveText(new FormData(event.target));
   if (event.target.id === "clozeForm") saveCard(new FormData(event.target));
   if (event.target.id === "reviewAnswerForm") checkReviewAnswer(new FormData(event.target));
 });
@@ -1358,19 +1364,6 @@ document.addEventListener("keydown", (event) => {
   event.preventDefault();
   createChunkFromSelection(state.selectedTextId);
 });
-
-function fillTextForm(parsed) {
-  const form = document.querySelector("#textForm");
-  if (!form || !parsed) return;
-  form.elements.title.value = parsed.title || form.elements.title.value;
-  form.elements.originalText.value = parsed.original || form.elements.originalText.value;
-  form.elements.rewrittenText.value = parsed.rewrite || form.elements.rewrittenText.value;
-  form.elements.translation.value = parsed.translation || form.elements.translation.value;
-  form.elements.note.value = parsed.translation || form.elements.note.value;
-  if (parsed.style && form.elements.textType.querySelector(`option[value="${parsed.style}"]`)) {
-    form.elements.textType.value = parsed.style;
-  }
-}
 
 async function copyPrompt(mode) {
   const settings = promptSettingsFromState();
@@ -1410,11 +1403,24 @@ function parseAiOutputIntoTextForm() {
     setState({ modal: { ...state.modal, parseMessage: "没有识别到 :::OIO 格式。请检查 AI 输出。" } });
     return;
   }
-  fillTextForm(parsed);
-  setState({ modal: { ...state.modal, promptStyle: parsed.style || state.modal.promptStyle || "dialogue", parseMessage: "已解析并填入表单，检查一下再保存。" } });
+  const currentForm = document.querySelector("#textForm");
+  const textType = parsed.style && currentForm?.elements.textType.querySelector(`option[value="${parsed.style}"]`) ? parsed.style : state.modal.textType || state.modal.promptStyle || "dialogue";
+  setState({
+    modal: {
+      ...state.modal,
+      title: parsed.title || currentForm?.elements.title.value || state.modal.title || "",
+      originalText: parsed.original || currentForm?.elements.originalText.value || state.modal.originalText || "",
+      rewrittenText: parsed.rewrite || currentForm?.elements.rewrittenText.value || state.modal.rewrittenText || "",
+      translation: parsed.translation || currentForm?.elements.translation.value || state.modal.translation || "",
+      note: parsed.translation || currentForm?.elements.note.value || state.modal.note || "",
+      textType,
+      promptStyle: parsed.style || state.modal.promptStyle || "dialogue",
+      parseMessage: "已解析并填入表单，检查一下再保存。",
+    },
+  });
 }
 
-function saveText(form) {
+async function saveText(form) {
   const id = state.modal.id || uid("text");
   const existing = state.texts.find((item) => item.id === id);
   const item = {
@@ -1430,6 +1436,14 @@ function saveText(form) {
     createdAt: existing?.createdAt || nowIso(),
     updatedAt: nowIso(),
   };
+
+  if (item.rewrittenText) {
+    try {
+      await copyText(item.rewrittenText);
+    } catch {
+      // Saving should still work even when the browser blocks clipboard access.
+    }
+  }
 
   setState({
     texts: existing ? state.texts.map((text) => (text.id === id ? item : text)) : [...state.texts, item],
