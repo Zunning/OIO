@@ -1887,7 +1887,11 @@ document.addEventListener("click", (event) => {
 
   if (target.dataset.matchSourceIntent !== undefined) matchSourceIntentAndOpenCloze(target.dataset.matchSourceIntent);
 
-  if (target.dataset.tokenIndex !== undefined) toggleToken(Number(target.dataset.tokenIndex));
+  if (target.dataset.tokenIndex !== undefined) {
+    const index = Number(target.dataset.tokenIndex);
+    if (event.detail >= 2) saveCardFromTokenIndexes([index]);
+    else toggleToken(index);
+  }
 
   if (target.dataset.deleteChunk) deleteChunk(target.dataset.deleteChunk);
 
@@ -2018,13 +2022,6 @@ function handleLiveInput(event) {
 
 document.addEventListener("input", handleLiveInput);
 document.addEventListener("change", handleLiveInput);
-
-document.addEventListener("dblclick", (event) => {
-  const target = event.target.closest("[data-token-index]");
-  if (!target) return;
-  event.preventDefault();
-  saveCardFromTokenIndexes([Number(target.dataset.tokenIndex)]);
-});
 
 document.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -2248,7 +2245,7 @@ function createChunkFromSelection(textId) {
     createdAt: nowIso(),
   };
   selection?.removeAllRanges();
-  const modal = sourceIntentsForText(chunk.textId).length ? { type: "sourceIntentMatch", chunkId: chunk.id } : { type: "cloze", chunkId: chunk.id, selectedIndexes: [] };
+  const modal = availableSourceIntentsForChunk(chunk).length ? { type: "sourceIntentMatch", chunkId: chunk.id } : { type: "cloze", chunkId: chunk.id, selectedIndexes: [] };
   setState({
     chunks: [...state.chunks, chunk],
     modal,
@@ -2257,7 +2254,7 @@ function createChunkFromSelection(textId) {
 
 function openSourceIntentMatch(chunkId) {
   const chunk = state.chunks.find((item) => item.id === chunkId);
-  if (!chunk || !sourceIntentsForText(chunk.textId).length) {
+  if (!chunk || !availableSourceIntentsForChunk(chunk).length) {
     setState({ modal: { type: "cloze", chunkId, selectedIndexes: [] } });
     return;
   }
