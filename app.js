@@ -1128,23 +1128,24 @@ function renderTextDetail() {
   `;
 }
 
-function renderImageGrid(images) {
+function renderImageGrid(images, options = {}) {
   return `
     <div class="image-grid">
       ${images
-        .map(
-          (image) => `
+        .map((image) => {
+          const isPending = options.pending && image.pending;
+          return `
             <div class="image-tile">
               <button type="button" class="image-thumb" data-view-image="${image.id}">
                 <img src="${image.dataUrl}" alt="${escapeHtml(image.name)}" />
               </button>
               <div class="image-meta">
                 <span title="${escapeHtml(image.name)}">${escapeHtml(image.name || "image")}</span>
-                <button type="button" class="ghost danger small" data-delete-image="${image.id}">删除</button>
+                <button type="button" class="ghost danger small" ${isPending ? `data-remove-pending-image="${image.id}"` : `data-delete-image="${image.id}"`}>删除</button>
               </div>
             </div>
-          `,
-        )
+          `;
+        })
         .join("")}
     </div>
   `;
@@ -1460,7 +1461,7 @@ function renderModal() {
 }
 
 function renderImagePreviewModal() {
-  const image = state.images.find((item) => item.id === state.modal.imageId);
+  const image = state.images.find((item) => item.id === state.modal.imageId) || state.modal.returnModal?.pendingImages?.find((item) => item.id === state.modal.imageId);
   if (!image) return "";
   return `
     <div class="modal">
@@ -1555,6 +1556,7 @@ function renderTextModal() {
   const modalTranslation = state.modal.translation ?? item?.translation ?? "";
   const modalNote = state.modal.note ?? item?.note ?? "";
   const modalTags = state.modal.tags ?? item?.tags?.join(", ") ?? "";
+  const modalImages = [...(item ? imagesForText(item.id) : []), ...(state.modal.pendingImages || [])];
   return `
     <div class="modal">
       <form class="modal-box" id="textForm">
@@ -1643,6 +1645,19 @@ function renderTextModal() {
           <label>中文翻译<textarea name="translation">${escapeHtml(modalTranslation)}</textarea></label>
           <label>备注<textarea name="note">${escapeHtml(modalNote)}</textarea></label>
           <label>标签<input name="tags" value="${escapeHtml(modalTags)}" placeholder="daily, speaking" /></label>
+          <div class="muted-box">
+            <div class="section-head">
+              <div>
+                <strong>图片</strong>
+                <p class="subtle">${modalImages.length ? `${modalImages.length} 张图片会跟随文本保存。` : "可以先上传截图、照片或材料页。"}</p>
+              </div>
+            </div>
+            <label class="image-upload">
+              <input type="file" accept="image/*" multiple data-modal-upload-images />
+              <span>上传图片</span>
+            </label>
+            ${modalImages.length ? renderImageGrid(modalImages, { pending: true }) : `<div class="empty compact-empty">还没有图片。</div>`}
+          </div>
           <div class="toolbar">
             <button type="submit">保存</button>
             <button type="button" class="secondary" data-close-modal>取消</button>
@@ -1770,7 +1785,7 @@ function render() {
 }
 
 document.addEventListener("click", (event) => {
-  const target = event.target.closest("[data-route], [data-open-modal], [data-close-modal], [data-view-text], [data-edit-text], [data-delete-text], [data-create-chunk], [data-open-cloze], [data-token-index], [data-delete-chunk], [data-delete-card], [data-delete-image], [data-view-image], [data-start-review], [data-continue-review], [data-cleanup-familiar], [data-clear-review-summary], [data-calendar-day], [data-calendar-group], [data-select-visible-texts], [data-clear-export-selection], [data-copy-text-export], [data-rate], [data-stop-review], [data-save-source-intent], [data-finish-source-intents], [data-toggle-source-text], [data-open-source-intents], [data-prompt-style], [data-prompt-ielts-skill], [data-copy-prompt], [data-open-chatgpt], [data-copy-modal-prompt], [data-parse-ai-output]");
+  const target = event.target.closest("[data-route], [data-open-modal], [data-close-modal], [data-view-text], [data-edit-text], [data-delete-text], [data-create-chunk], [data-open-cloze], [data-token-index], [data-delete-chunk], [data-delete-card], [data-delete-image], [data-remove-pending-image], [data-view-image], [data-start-review], [data-continue-review], [data-cleanup-familiar], [data-clear-review-summary], [data-calendar-day], [data-calendar-group], [data-select-visible-texts], [data-clear-export-selection], [data-copy-text-export], [data-rate], [data-stop-review], [data-save-source-intent], [data-finish-source-intents], [data-toggle-source-text], [data-open-source-intents], [data-prompt-style], [data-prompt-ielts-skill], [data-copy-prompt], [data-open-chatgpt], [data-copy-modal-prompt], [data-parse-ai-output]");
   if (!target) return;
 
   if (target.dataset.route) routeTo(target.dataset.route);
@@ -1787,7 +1802,7 @@ document.addEventListener("click", (event) => {
 
   if (target.dataset.openSourceIntents) setState({ modal: { type: "sourceIntent", textId: target.dataset.openSourceIntents } });
 
-  if (target.dataset.closeModal !== undefined) setState({ modal: null });
+  if (target.dataset.closeModal !== undefined) setState({ modal: state.modal?.returnModal || null });
 
   if (target.dataset.viewText) routeTo("text", { selectedTextId: target.dataset.viewText });
 
@@ -1807,7 +1822,9 @@ document.addEventListener("click", (event) => {
 
   if (target.dataset.deleteImage) deleteImage(target.dataset.deleteImage);
 
-  if (target.dataset.viewImage) setState({ modal: { type: "imagePreview", imageId: target.dataset.viewImage } });
+  if (target.dataset.removePendingImage) removePendingImage(target.dataset.removePendingImage);
+
+  if (target.dataset.viewImage) setState({ modal: { type: "imagePreview", imageId: target.dataset.viewImage, returnModal: state.modal?.type === "text" ? state.modal : null } });
 
   if (target.dataset.startReview) startReview(target.dataset.startReview);
 
@@ -1850,6 +1867,11 @@ document.addEventListener("click", (event) => {
 });
 
 function handleLiveInput(event) {
+  if (event.target.dataset.modalUploadImages !== undefined) {
+    addPendingImages(event.target.files);
+    event.target.value = "";
+    return;
+  }
   if (event.target.dataset.uploadImages) {
     uploadImages(event.target.dataset.uploadImages, event.target.files);
     event.target.value = "";
@@ -2026,6 +2048,7 @@ function parseAiOutputIntoTextForm() {
 async function saveText(form) {
   const id = state.modal.id || uid("text");
   const existing = state.texts.find((item) => item.id === id);
+  const pendingImages = state.modal.pendingImages || [];
   const item = {
     id,
     title: form.get("title").trim(),
@@ -2050,6 +2073,7 @@ async function saveText(form) {
 
   setState({
     texts: existing ? state.texts.map((text) => (text.id === id ? item : text)) : [...state.texts, item],
+    images: pendingImages.length ? [...state.images, ...pendingImages.map(({ pending, ...image }) => ({ ...image, textId: id }))] : state.images,
     modal: !existing && item.originalText ? { type: "sourceIntent", textId: id } : null,
     route: "text",
     selectedTextId: id,
@@ -2206,6 +2230,31 @@ async function uploadImages(textId, fileList) {
     })),
   );
   setState({ images: [...state.images, ...images] });
+}
+
+async function addPendingImages(fileList) {
+  if (!state.modal || state.modal.type !== "text") return;
+  const files = [...(fileList || [])].filter((file) => file.type.startsWith("image/"));
+  if (!files.length) return;
+  if (files.some((file) => file.size > 1024 * 1024)) {
+    alert("有图片超过 1MB，第一版会照常保存，但 localStorage 可能会变大。");
+  }
+  const images = await Promise.all(
+    files.map(async (file) => ({
+      id: uid("image"),
+      textId: "",
+      name: file.name || "image",
+      dataUrl: await readFileAsDataUrl(file),
+      createdAt: nowIso(),
+      pending: true,
+    })),
+  );
+  setState({ modal: { ...state.modal, pendingImages: [...(state.modal.pendingImages || []), ...images] } });
+}
+
+function removePendingImage(id) {
+  if (!state.modal || state.modal.type !== "text") return;
+  setState({ modal: { ...state.modal, pendingImages: (state.modal.pendingImages || []).filter((image) => image.id !== id) } });
 }
 
 function deleteImage(id) {
