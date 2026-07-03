@@ -236,6 +236,28 @@ label {
   align-items: center;
 }
 
+.review-controls {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.inline-select {
+  max-width: 220px;
+}
+
+.checkbox-line {
+  display: flex;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+}
+
+.checkbox-line input {
+  width: auto;
+}
+
 .segmented {
   display: flex;
   flex-wrap: wrap;
@@ -390,6 +412,11 @@ label {
   background: rgba(255, 255, 255, 0.42);
 }
 
+.compact-empty {
+  padding: 18px;
+  margin-top: 12px;
+}
+
 .modal {
   position: fixed;
   inset: 0;
@@ -427,8 +454,102 @@ label {
   align-content: center;
 }
 
+.stat.flat {
+  min-height: 72px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface-2);
+  box-shadow: none;
+}
+
 .stat strong {
   font-size: 28px;
+}
+
+.mini-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.mini-row {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  color: var(--ink);
+  text-align: left;
+}
+
+.mini-row:hover {
+  background: var(--surface-2);
+}
+
+.mini-row.static {
+  cursor: default;
+}
+
+.mini-row.static:hover {
+  background: white;
+}
+
+.mini-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.mini-row strong {
+  flex: 0 0 auto;
+  color: var(--accent-strong);
+}
+
+.calendar-title {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.calendar-cell {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 34px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: white;
+  color: var(--ink);
+}
+
+.calendar-cell.checked {
+  border-color: rgba(61, 122, 72, 0.45);
+  background: rgba(61, 122, 72, 0.12);
+}
+
+.calendar-cell strong {
+  position: absolute;
+  right: 4px;
+  top: 1px;
+  color: var(--ok);
+  font-size: 12px;
+}
+
+.empty-cell {
+  border-color: transparent;
+  background: transparent;
+  pointer-events: none;
 }
 
 .review-layout {

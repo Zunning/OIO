@@ -11,6 +11,13 @@ const initialState = {
   selectedChunkId: null,
   reviewQueue: [],
   reviewIndex: 0,
+  reviewSettings: {
+    sessionSize: 7,
+  },
+  reviewMode: "all",
+  activeSessionCardIds: [],
+  sessionResults: [],
+  reviewSummary: null,
   showAnswer: false,
   reviewInput: "",
   reviewChecked: false,
@@ -43,7 +50,7 @@ function loadState() {
 }
 
 function persist() {
-  const { route, selectedTextId, selectedChunkId, reviewQueue, reviewIndex, showAnswer, reviewInput, reviewChecked, reviewCorrect, showSourceText, promptMode, promptStyle, promptVariant, promptLevel, promptIeltsSkill, promptIeltsBand, promptEmoji, promptDraft, promptCopied, modal, search, ...data } = state;
+  const { route, selectedTextId, selectedChunkId, reviewQueue, reviewIndex, reviewMode, activeSessionCardIds, sessionResults, reviewSummary, showAnswer, reviewInput, reviewChecked, reviewCorrect, showSourceText, promptMode, promptStyle, promptVariant, promptLevel, promptIeltsSkill, promptIeltsBand, promptEmoji, promptDraft, promptCopied, modal, search, ...data } = state;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
 }
 
@@ -78,6 +85,10 @@ function todayDate() {
 function formatPlainDate(value) {
   if (!value) return "";
   return value.replaceAll("-", "/");
+}
+
+function dateKey(iso = nowIso()) {
+  return new Date(iso).toISOString().slice(0, 10);
 }
 
 function splitTags(value) {
@@ -464,7 +475,7 @@ function expandSelectionToWord(fullText, selected) {
 
 function dueCards() {
   const now = Date.now();
-  return state.cards.filter((card) => !isGraduatedCard(card) && new Date(card.dueAt).getTime() <= now);
+  return sortReviewCards(state.cards.filter((card) => !isGraduatedCard(card) && new Date(card.dueAt).getTime() <= now));
 }
 
 function cardsForText(textId) {
@@ -476,8 +487,66 @@ function successfulReviewCount(card) {
   return state.reviews.filter((review) => review.cardId === card.id && review.rating !== "again").length;
 }
 
+function cardPriority(card) {
+  return card.priority === "important" ? "important" : "normal";
+}
+
 function isGraduatedCard(card) {
   return Boolean(card.isGraduated) || successfulReviewCount(card) >= 3;
+}
+
+function cardCreatedTime(card) {
+  return new Date(card.createdAt || 0).getTime() || 0;
+}
+
+function sortReviewCards(cards) {
+  return cards.slice().sort((a, b) => {
+    if (cardPriority(a) !== cardPriority(b)) return cardPriority(a) === "important" ? -1 : 1;
+    const masteryDiff = successfulReviewCount(a) - successfulReviewCount(b);
+    if (masteryDiff) return masteryDiff;
+    const reviewDiff = (a.reviewCount || 0) - (b.reviewCount || 0);
+    if (reviewDiff) return reviewDiff;
+    const createdDiff = cardCreatedTime(b) - cardCreatedTime(a);
+    if (createdDiff) return createdDiff;
+    return new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime();
+  });
+}
+
+function cardsForReviewMode(mode = "all") {
+  const due = dueCards();
+  if (mode === "important") return due.filter((card) => cardPriority(card) === "important");
+  if (mode && mode !== "all") return due.filter((card) => card.textId === mode);
+  return due;
+}
+
+function reviewSettings() {
+  return {
+    sessionSize: Number(state.reviewSettings?.sessionSize) || 7,
+  };
+}
+
+function reviewsForDate(day) {
+  return state.reviews.filter((review) => dateKey(review.reviewedAt) === day);
+}
+
+function todayReviews() {
+  return reviewsForDate(todayDate());
+}
+
+function streakDays() {
+  const days = new Set(state.reviews.map((review) => dateKey(review.reviewedAt)));
+  let streak = 0;
+  const cursor = new Date(todayDate());
+  while (days.has(cursor.toISOString().slice(0, 10))) {
+    streak += 1;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  return streak;
+}
+
+function cardLabel(card) {
+  const chunk = state.chunks.find((item) => item.id === card.chunkId);
+  return chunk?.selectedText || card.answer || card.clozeText || "Untitled card";
 }
 
 function chunksForText(textId) {
@@ -531,6 +600,9 @@ function appShell(content) {
 }
 
 function renderHome() {
+  const todaysReviews = todayReviews();
+  const againCount = todaysReviews.filter((review) => review.rating === "again").length;
+  const easyCount = todaysReviews.filter((review) => review.rating === "easy").length;
   const texts = state.texts
     .filter((item) => {
       const q = state.search.trim().toLowerCase();
@@ -554,7 +626,23 @@ function renderHome() {
     <div class="grid three">
       <div class="panel stat"><span class="subtle">今日到期</span><strong>${dueCards().length}</strong></div>
       <div class="panel stat"><span class="subtle">已收集 chunk</span><strong>${state.chunks.length}</strong></div>
-      <div class="panel stat"><span class="subtle">总复习次数</span><strong>${state.reviews.length}</strong></div>
+      <div class="panel stat"><span class="subtle">连续复习</span><strong>${streakDays()} 天</strong></div>
+    </div>
+
+    <div class="grid two" style="margin-top: 16px;">
+      <section class="panel">
+        <div class="section-head">
+          <div>
+            <h3>今日复习</h3>
+            <p class="subtle">${todaysReviews.length ? `已复习 ${todaysReviews.length} 张 · Again ${againCount} · Easy ${easyCount}` : "今天还没有复习记录。"}</p>
+          </div>
+        </div>
+        ${renderTodayReviewList(todaysReviews)}
+      </section>
+      <section class="panel">
+        <h3>签到日历</h3>
+        ${renderStudyCalendar()}
+      </section>
     </div>
 
     <div class="panel" style="margin-top: 16px;">
@@ -571,6 +659,51 @@ function renderHome() {
           : `<div class="empty">还没有文本。先粘贴一段 AI 改写后的英文，OIO 就有第一块地基了。</div>`
       }
     </div>
+  `;
+}
+
+function renderTodayReviewList(reviews) {
+  if (!reviews.length) return `<div class="empty compact-empty">完成 1 张复习后，今天就会自动签到。</div>`;
+  return `
+    <div class="mini-list">
+      ${reviews
+        .slice(-6)
+        .reverse()
+        .map((review) => {
+          const card = state.cards.find((item) => item.id === review.cardId);
+          return `<button type="button" class="mini-row" data-calendar-day="${dateKey(review.reviewedAt)}">
+            <span>${escapeHtml(card ? cardLabel(card) : "已删除卡片")}</span>
+            <strong>${escapeHtml(review.rating)}</strong>
+          </button>`;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function renderStudyCalendar() {
+  const today = new Date(todayDate());
+  const year = today.getFullYear();
+  const month = today.getMonth();
+  const first = new Date(Date.UTC(year, month, 1));
+  const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  const leading = first.getUTCDay();
+  const reviewDays = new Set(state.reviews.map((review) => dateKey(review.reviewedAt)));
+  const cells = [];
+  for (let i = 0; i < leading; i += 1) cells.push(`<span class="calendar-cell empty-cell"></span>`);
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const key = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const checked = reviewDays.has(key);
+    cells.push(`
+      <button type="button" class="calendar-cell ${checked ? "checked" : ""}" data-calendar-day="${key}">
+        <span>${day}</span>
+        ${checked ? "<strong>✓</strong>" : ""}
+      </button>
+    `);
+  }
+  return `
+    <div class="calendar-title">${year} / ${String(month + 1).padStart(2, "0")}</div>
+    <div class="calendar-grid">${cells.join("")}</div>
   `;
 }
 
@@ -886,7 +1019,7 @@ function renderCardItem(card) {
       <p class="cloze">${escapeHtml(card.clozeText)}</p>
       <p class="answer">${escapeHtml(card.answer)}</p>
       ${sourceIntent ? `<p class="subtle">原始意图：${escapeHtml(sourceIntent.note)}</p>` : ""}
-      <p class="subtle">来源：${escapeHtml(text?.title || "未知文本")} · ${reviewStatus} · 下次：${formatDate(card.dueAt)} · 复习 ${card.reviewCount || 0} 次</p>
+      <p class="subtle">来源：${escapeHtml(text?.title || "未知文本")} · ${cardPriority(card) === "important" ? "重要 · " : ""}${reviewStatus} · 下次：${formatDate(card.dueAt)} · 复习 ${card.reviewCount || 0} 次</p>
       <div class="toolbar" style="margin-top: 12px;">
         <button class="secondary" data-view-text="${card.textId}">回到语境</button>
         <button class="ghost danger" data-delete-card="${card.id}">删除</button>
@@ -896,20 +1029,35 @@ function renderCardItem(card) {
 }
 
 function renderReview() {
+  if (state.reviewQueue.length) return renderReviewSession();
+  if (state.reviewSummary) return renderReviewSummary();
+
   const due = dueCards();
+  const importantDue = due.filter((card) => cardPriority(card) === "important");
+  const settings = reviewSettings();
   const grouped = state.texts
     .map((text) => ({ text, cards: due.filter((card) => card.textId === text.id) }))
     .filter((group) => group.cards.length);
-
-  if (state.reviewQueue.length) return renderReviewSession();
 
   return `
     <div class="topbar">
       <div>
         <h2>复习</h2>
-        <div class="subtle">同一语境可以一起复习，但每张卡片单独评分。</div>
+        <div class="subtle">自动优先重要、未掌握和新学内容。每张卡片三次成功后毕业。</div>
       </div>
     </div>
+    <section class="panel review-controls">
+      <div class="toolbar">
+        <button data-start-review="all">复习全部</button>
+        <button class="secondary" data-start-review="important" ${importantDue.length ? "" : "disabled"}>只复习重要</button>
+      </div>
+      <label class="inline-select">每组数量
+        <select id="reviewSessionSize">
+          ${[5, 7, 10, 15, 20].map((size) => `<option value="${size}" ${settings.sessionSize === size ? "selected" : ""}>${size}</option>`).join("")}
+        </select>
+      </label>
+      <p class="subtle">全部到期 ${due.length} 张，重要 ${importantDue.length} 张。</p>
+    </section>
     <div class="grid">
       ${
         grouped.length
@@ -921,16 +1069,58 @@ function renderReview() {
 }
 
 function renderReviewPack(group) {
+  const importantCount = group.cards.filter((card) => cardPriority(card) === "important").length;
   return `
     <article class="item">
       <div class="row">
         <div>
           <h3>${escapeHtml(group.text.title)}</h3>
-          <p class="subtle">${group.cards.length} 张到期卡片。建议一次复习 3 到 7 张，判断更清楚。</p>
+          <p class="subtle">${group.cards.length} 张到期卡片${importantCount ? `，${importantCount} 张重要` : ""}。</p>
         </div>
         <button data-start-review="${group.text.id}">复习这一组</button>
       </div>
     </article>
+  `;
+}
+
+function renderReviewSummary() {
+  const summary = state.reviewSummary;
+  const remaining = cardsForReviewMode(summary.mode).length;
+  return `
+    <div class="topbar">
+      <div>
+        <h2>本组完成</h2>
+        <div class="subtle">今天已自动签到。还想练的话可以继续下一组。</div>
+      </div>
+    </div>
+    <section class="panel">
+      <div class="grid three">
+        <div class="stat flat"><span class="subtle">完成</span><strong>${summary.total}</strong></div>
+        <div class="stat flat"><span class="subtle">正确</span><strong>${summary.correct}</strong></div>
+        <div class="stat flat"><span class="subtle">毕业</span><strong>${summary.graduated}</strong></div>
+      </div>
+      <div class="toolbar" style="margin-top: 14px;">
+        <button data-continue-review ${remaining ? "" : "disabled"}>继续复习</button>
+        <button class="secondary" data-cleanup-familiar ${remaining ? "" : "disabled"}>把未复习的熟卡移出复习</button>
+        <button class="ghost" data-clear-review-summary>回到复习首页</button>
+      </div>
+      <p class="subtle" style="margin-top: 10px;">还有 ${remaining} 张到期卡片。熟卡清理会把本组没复习到、但已经掌握 2 次以上的到期卡片标记为毕业。${summary.cleaned ? `本次已移出 ${summary.cleaned} 张。` : ""}</p>
+    </section>
+    <section class="panel" style="margin-top: 16px;">
+      <h3>这组复习了什么</h3>
+      <div class="mini-list">
+        ${summary.results
+          .map((result) => {
+            const card = state.cards.find((item) => item.id === result.cardId) || result.card;
+            const sourceIntent = sourceIntentFor(card?.sourceIntentId);
+            return `<div class="mini-row static">
+              <span>${escapeHtml(card ? cardLabel(card) : "已删除卡片")}${sourceIntent ? ` · ${escapeHtml(sourceIntent.note)}` : ""}</span>
+              <strong>${escapeHtml(result.rating)}${result.graduated ? " · 毕业" : ""}</strong>
+            </div>`;
+          })
+          .join("")}
+      </div>
+    </section>
   `;
 }
 
@@ -1013,7 +1203,46 @@ function renderModal() {
   if (state.modal.type === "text") return renderTextModal();
   if (state.modal.type === "sourceIntent") return renderSourceIntentModal();
   if (state.modal.type === "cloze") return renderClozeModal();
+  if (state.modal.type === "dailyReview") return renderDailyReviewModal();
   return "";
+}
+
+function renderDailyReviewModal() {
+  const reviews = reviewsForDate(state.modal.day);
+  const againCount = reviews.filter((review) => review.rating === "again").length;
+  const goodCount = reviews.filter((review) => review.rating === "good").length;
+  const easyCount = reviews.filter((review) => review.rating === "easy").length;
+  return `
+    <div class="modal">
+      <div class="modal-box">
+        <div class="section-head">
+          <div>
+            <h3>${formatPlainDate(state.modal.day)} 复习记录</h3>
+            <p class="subtle">${reviews.length ? `${reviews.length} 张 · Again ${againCount} · Good ${goodCount} · Easy ${easyCount}` : "这一天还没有复习记录。"}</p>
+          </div>
+          <button type="button" class="secondary" data-close-modal>关闭</button>
+        </div>
+        <div class="mini-list" style="margin-top: 14px;">
+          ${
+            reviews.length
+              ? reviews
+                  .slice()
+                  .reverse()
+                  .map((review) => {
+                    const card = state.cards.find((item) => item.id === review.cardId);
+                    const sourceIntent = card ? sourceIntentFor(card.sourceIntentId) : null;
+                    return `<div class="mini-row static">
+                      <span>${escapeHtml(card ? cardLabel(card) : "已删除卡片")}${sourceIntent ? ` · ${escapeHtml(sourceIntent.note)}` : ""}</span>
+                      <strong>${escapeHtml(review.rating)}</strong>
+                    </div>`;
+                  })
+                  .join("")
+              : `<div class="empty compact-empty">当天没有内容。</div>`
+          }
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 function renderTextModal() {
@@ -1224,6 +1453,10 @@ function renderClozeModal() {
               : ""
           }
           <label>提示 / 备注<input name="focusNote" placeholder="比如：in the mood for = 有心情做某事" /></label>
+          <label class="checkbox-line">
+            <input type="checkbox" name="priority" value="important" />
+            <span>重要，复习时优先出现</span>
+          </label>
           <div class="toolbar">
             <button type="submit">保存卡片</button>
             <button type="button" class="secondary" data-close-modal>取消</button>
@@ -1246,7 +1479,7 @@ function render() {
 }
 
 document.addEventListener("click", (event) => {
-  const target = event.target.closest("[data-route], [data-open-modal], [data-close-modal], [data-view-text], [data-edit-text], [data-delete-text], [data-create-chunk], [data-open-cloze], [data-token-index], [data-delete-chunk], [data-delete-card], [data-start-review], [data-rate], [data-stop-review], [data-save-source-intent], [data-finish-source-intents], [data-toggle-source-text], [data-open-source-intents], [data-prompt-style], [data-prompt-ielts-skill], [data-copy-prompt], [data-open-chatgpt], [data-copy-modal-prompt], [data-parse-ai-output]");
+  const target = event.target.closest("[data-route], [data-open-modal], [data-close-modal], [data-view-text], [data-edit-text], [data-delete-text], [data-create-chunk], [data-open-cloze], [data-token-index], [data-delete-chunk], [data-delete-card], [data-start-review], [data-continue-review], [data-cleanup-familiar], [data-clear-review-summary], [data-calendar-day], [data-rate], [data-stop-review], [data-save-source-intent], [data-finish-source-intents], [data-toggle-source-text], [data-open-source-intents], [data-prompt-style], [data-prompt-ielts-skill], [data-copy-prompt], [data-open-chatgpt], [data-copy-modal-prompt], [data-parse-ai-output]");
   if (!target) return;
 
   if (target.dataset.route) routeTo(target.dataset.route);
@@ -1275,13 +1508,21 @@ document.addEventListener("click", (event) => {
 
   if (target.dataset.openCloze) setState({ modal: { type: "cloze", chunkId: target.dataset.openCloze, selectedIndexes: [] } });
 
-  if (target.dataset.tokenIndex) toggleToken(Number(target.dataset.tokenIndex));
+  if (target.dataset.tokenIndex !== undefined) toggleToken(Number(target.dataset.tokenIndex));
 
   if (target.dataset.deleteChunk) deleteChunk(target.dataset.deleteChunk);
 
   if (target.dataset.deleteCard) deleteCard(target.dataset.deleteCard);
 
   if (target.dataset.startReview) startReview(target.dataset.startReview);
+
+  if (target.dataset.continueReview !== undefined) startReview(state.reviewSummary?.mode || "all");
+
+  if (target.dataset.cleanupFamiliar !== undefined) cleanupUnreviewedFamiliarCards();
+
+  if (target.dataset.clearReviewSummary !== undefined) setState({ reviewSummary: null });
+
+  if (target.dataset.calendarDay) setState({ modal: { type: "dailyReview", day: target.dataset.calendarDay } });
 
   if (target.dataset.rate) rateCard(target.dataset.rate);
 
@@ -1320,6 +1561,9 @@ function handleLiveInput(event) {
   }
   if (event.target.id === "promptEmoji") {
     setState({ promptEmoji: event.target.value, promptCopied: "" });
+  }
+  if (event.target.id === "reviewSessionSize") {
+    setState({ reviewSettings: { ...reviewSettings(), sessionSize: Number(event.target.value) || 7 } });
   }
   if (["modalPromptStyle", "modalPromptMode", "modalPromptVariant", "modalPromptLevel", "modalPromptIeltsSkill", "modalPromptIeltsBand", "modalPromptEmoji"].includes(event.target.id)) {
     const keyMap = {
@@ -1560,8 +1804,10 @@ function saveCard(form) {
     answer: form.get("answer").trim(),
     hint: "",
     focusNote: form.get("focusNote").trim(),
+    priority: form.get("priority") === "important" ? "important" : "normal",
     reviewCount: 0,
     masteryCount: 0,
+    easyStreak: 0,
     isGraduated: false,
     graduatedAt: "",
     dueAt: nowIso(),
@@ -1600,12 +1846,25 @@ function deleteCard(id) {
 }
 
 function startReview(textId) {
-  const queue = (textId === "all" ? dueCards() : dueCards().filter((card) => card.textId === textId)).slice(0, 7);
+  const settings = reviewSettings();
+  const queue = cardsForReviewMode(textId).slice(0, settings.sessionSize);
   if (!queue.length) {
     alert("当前没有到期卡片。");
     return;
   }
-  setState({ route: "review", reviewQueue: queue, reviewIndex: 0, showAnswer: false, reviewInput: "", reviewChecked: false, reviewCorrect: false });
+  setState({
+    route: "review",
+    reviewQueue: queue,
+    reviewMode: textId,
+    activeSessionCardIds: queue.map((card) => card.id),
+    sessionResults: [],
+    reviewSummary: null,
+    reviewIndex: 0,
+    showAnswer: false,
+    reviewInput: "",
+    reviewChecked: false,
+    reviewCorrect: false,
+  });
 }
 
 function checkReviewAnswer(form) {
@@ -1623,25 +1882,40 @@ function checkReviewAnswer(form) {
 
 function rateCard(rating) {
   const card = state.reviewQueue[state.reviewIndex];
-  const minutes = rating === "again" ? 10 : rating === "good" ? 24 * 60 : 3 * 24 * 60;
+  const minutes = reviewIntervalMinutes(card, rating);
   const dueAt = new Date(Date.now() + minutes * 60 * 1000).toISOString();
-  const updatedCards = state.cards.map((item) =>
-    item.id === card.id ? updateReviewedCard(item, rating, dueAt) : item,
-  );
+  let updatedCard = null;
+  const updatedCards = state.cards.map((item) => {
+    if (item.id !== card.id) return item;
+    updatedCard = updateReviewedCard(item, rating, dueAt);
+    return updatedCard;
+  });
+  const result = {
+    cardId: card.id,
+    card,
+    rating,
+    wasCorrect: state.reviewCorrect,
+    graduated: Boolean(updatedCard?.isGraduated) && !card.isGraduated,
+  };
+  const sessionResults = [...state.sessionResults, result];
   const reviews = [
     ...state.reviews,
     {
       id: uid("review"),
       cardId: card.id,
       rating,
+      wasCorrect: state.reviewCorrect,
       reviewedAt: nowIso(),
     },
   ];
 
   const isDone = state.reviewIndex >= state.reviewQueue.length - 1;
+  const reviewSummary = isDone ? buildReviewSummary(sessionResults, state.reviewMode) : null;
   setState({
     cards: updatedCards,
     reviews,
+    sessionResults,
+    reviewSummary,
     reviewQueue: isDone ? [] : state.reviewQueue,
     reviewIndex: isDone ? 0 : state.reviewIndex + 1,
     showAnswer: false,
@@ -1649,6 +1923,14 @@ function rateCard(rating) {
     reviewChecked: false,
     reviewCorrect: false,
   });
+}
+
+function reviewIntervalMinutes(card, rating) {
+  if (rating === "again") return 10;
+  if (rating === "good") return 24 * 60;
+  const nextEasyStreak = (card.easyStreak || 0) + 1;
+  const days = nextEasyStreak === 1 ? 3 : nextEasyStreak === 2 ? 7 : nextEasyStreak === 3 ? 14 : 30;
+  return days * 24 * 60;
 }
 
 function updateReviewedCard(card, rating, dueAt) {
@@ -1660,9 +1942,34 @@ function updateReviewedCard(card, rating, dueAt) {
     lastReviewedAt: nowIso(),
     reviewCount: (card.reviewCount || 0) + 1,
     masteryCount,
+    easyStreak: rating === "easy" ? (card.easyStreak || 0) + 1 : 0,
     isGraduated,
     graduatedAt: isGraduated && !card.graduatedAt ? nowIso() : card.graduatedAt || "",
   };
+}
+
+function buildReviewSummary(results, mode) {
+  return {
+    mode,
+    results,
+    total: results.length,
+    correct: results.filter((result) => result.wasCorrect).length,
+    graduated: results.filter((result) => result.graduated).length,
+  };
+}
+
+function cleanupUnreviewedFamiliarCards() {
+  const reviewed = new Set(state.reviewSummary?.results.map((result) => result.cardId) || state.activeSessionCardIds);
+  const candidates = cardsForReviewMode(state.reviewSummary?.mode || state.reviewMode).filter((card) => !reviewed.has(card.id) && successfulReviewCount(card) >= 2);
+  if (!candidates.length) {
+    alert("没有符合条件的未复习熟卡。");
+    return;
+  }
+  const now = nowIso();
+  setState({
+    cards: state.cards.map((card) => (candidates.some((item) => item.id === card.id) ? { ...card, isGraduated: true, graduatedAt: card.graduatedAt || now } : card)),
+    reviewSummary: state.reviewSummary ? { ...state.reviewSummary, cleaned: candidates.length } : state.reviewSummary,
+  });
 }
 
 render();
