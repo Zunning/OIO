@@ -34,6 +34,7 @@ const initialState = {
   promptDraft: "",
   promptCopied: "",
   autoSaveAfterParse: false,
+  lastCardUndo: null,
   exportTextIds: [],
   exportOptions: {
     format: "markdown",
@@ -65,7 +66,7 @@ function loadState() {
 }
 
 function persist() {
-  const { route, selectedTextId, selectedChunkId, reviewQueue, reviewIndex, reviewMode, activeSessionCardIds, sessionResults, reviewSummary, showAnswer, reviewInput, reviewChecked, reviewCorrect, showSourceText, promptMode, promptStyle, promptVariant, promptLevel, promptIeltsSkill, promptIeltsBand, promptEmoji, promptDraft, promptCopied, exportTextIds, exportMessage, exportPreview, modal, search, ...data } = state;
+  const { route, selectedTextId, selectedChunkId, reviewQueue, reviewIndex, reviewMode, activeSessionCardIds, sessionResults, reviewSummary, showAnswer, reviewInput, reviewChecked, reviewCorrect, showSourceText, promptMode, promptStyle, promptVariant, promptLevel, promptIeltsSkill, promptIeltsBand, promptEmoji, promptDraft, promptCopied, lastCardUndo, exportTextIds, exportMessage, exportPreview, modal, search, ...data } = state;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
 }
 
@@ -1088,7 +1089,7 @@ function renderTextDetail() {
     <div class="topbar">
       <div>
         <h2>${escapeHtml(text.title)}</h2>
-        <div class="subtle">${formatPlainDate(text.sourceDate)}${text.sourceDate ? " · " : ""}${chunks.length} 个 chunk，${cards.length} 张卡片。选中文本后按 Enter 直接挖空。</div>
+        <div class="subtle">${formatPlainDate(text.sourceDate)}${text.sourceDate ? " · " : ""}${chunks.length} 个 chunk，${cards.length} 张卡片。选中文本后按 Space 直接挖空。</div>
       </div>
       <div class="toolbar">
         <button class="secondary" data-route="home">返回</button>
@@ -1807,7 +1808,7 @@ function renderClozeModal() {
         <div class="grid">
           <div class="muted-box">
             <p><strong>${escapeHtml(chunk.selectedText)}</strong></p>
-            <p class="subtle">chunk 已高亮保存。点击选择词，双击直接保存，Ctrl+Z 撤销上一步选择。</p>
+            <p class="subtle">chunk 已高亮保存。点击选择词，双击直接保存，Ctrl+Z 撤销选择或刚生成的卡片。</p>
           </div>
           <div class="token-list">
             ${tokens
@@ -2042,19 +2043,31 @@ document.addEventListener("submit", async (event) => {
   if (event.target.id === "reviewAnswerForm") checkReviewAnswer(new FormData(event.target));
 });
 
+function isTypingTarget() {
+  const activeTag = document.activeElement?.tagName?.toLowerCase();
+  return ["input", "textarea", "select", "button"].includes(activeTag);
+}
+
+function isSpaceKey(event) {
+  return event.key === " " || event.code === "Space" || event.key === "Spacebar";
+}
+
 document.addEventListener("keydown", (event) => {
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z" && state.modal?.type === "cloze") {
-    const activeTag = document.activeElement?.tagName?.toLowerCase();
-    if (!["input", "textarea", "select"].includes(activeTag)) {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+    if (state.modal?.type === "cloze" && !isTypingTarget()) {
       event.preventDefault();
       undoClozeSelection();
+      return;
+    }
+    if (!state.modal && state.lastCardUndo && !isTypingTarget()) {
+      event.preventDefault();
+      undoLastCreatedCard();
     }
     return;
   }
 
-  if (event.key === "Enter" && state.modal?.type === "sourceIntent") {
-    const activeTag = document.activeElement?.tagName?.toLowerCase();
-    if (["input", "textarea", "select", "button"].includes(activeTag)) return;
+  if (isSpaceKey(event) && state.modal?.type === "sourceIntent") {
+    if (isTypingTarget()) return;
     const selection = window.getSelection();
     if (!selection || !selection.toString().trim()) return;
     event.preventDefault();
@@ -2062,9 +2075,8 @@ document.addEventListener("keydown", (event) => {
     return;
   }
 
-  if (event.key !== "Enter" || state.route !== "text" || state.modal) return;
-  const activeTag = document.activeElement?.tagName?.toLowerCase();
-  if (["input", "textarea", "select", "button"].includes(activeTag)) return;
+  if (!isSpaceKey(event) || state.route !== "text" || state.modal) return;
+  if (isTypingTarget()) return;
   const selection = window.getSelection();
   if (!selection || !selection.toString().trim()) return;
   event.preventDefault();
@@ -2345,6 +2357,7 @@ function saveCard(form) {
     answer: form.get("answer").trim(),
     focusNote: form.get("focusNote").trim(),
     priority: form.get("priority") === "important" ? "important" : "normal",
+    selectedIndexes: state.modal.selectedIndexes || [],
   });
 }
 
@@ -2364,10 +2377,11 @@ function saveCardFromTokenIndexes(indexes) {
     answer: selectedIndexes.map((index) => tokens[index]).join(" "),
     focusNote: "",
     priority: "normal",
+    selectedIndexes,
   });
 }
 
-function saveCardData({ chunk, sourceIntentId, clozeText, maskedChunk, answer, focusNote, priority }) {
+function saveCardData({ chunk, sourceIntentId, clozeText, maskedChunk, answer, focusNote, priority, selectedIndexes = [] }) {
   if (!chunk || !answer) return;
   const card = {
     id: uid("card"),
@@ -2394,6 +2408,24 @@ function saveCardData({ chunk, sourceIntentId, clozeText, maskedChunk, answer, f
     chunks: state.chunks.map((item) => (item.id === chunk.id ? { ...item, sourceIntentId } : item)),
     cards: [...state.cards, card],
     modal: null,
+    lastCardUndo: {
+      cardId: card.id,
+      chunkId: chunk.id,
+      previousSourceIntentId: chunk.sourceIntentId || "",
+      selectedIndexes,
+    },
+  });
+}
+
+function undoLastCreatedCard() {
+  const undo = state.lastCardUndo;
+  if (!undo) return;
+  const chunkExists = state.chunks.some((item) => item.id === undo.chunkId);
+  setState({
+    cards: state.cards.filter((item) => item.id !== undo.cardId),
+    chunks: state.chunks.map((item) => (item.id === undo.chunkId ? { ...item, sourceIntentId: undo.previousSourceIntentId || "" } : item)),
+    modal: chunkExists ? { type: "cloze", chunkId: undo.chunkId, selectedIndexes: undo.selectedIndexes || [] } : null,
+    lastCardUndo: null,
   });
 }
 
