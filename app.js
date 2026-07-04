@@ -1880,7 +1880,7 @@ document.addEventListener("click", (event) => {
 
   if (target.dataset.openSourceIntents) setState({ modal: { type: "sourceIntent", textId: target.dataset.openSourceIntents } });
 
-  if (target.dataset.closeModal !== undefined) setState({ modal: state.modal?.returnModal || null });
+  if (target.dataset.closeModal !== undefined) closeModal();
 
   if (target.dataset.viewText) routeTo("text", { selectedTextId: target.dataset.viewText });
 
@@ -2307,7 +2307,9 @@ function createChunkFromSelection(textId) {
     createdAt: nowIso(),
   };
   selection?.removeAllRanges();
-  const modal = availableSourceIntentsForChunk(chunk).length ? { type: "sourceIntentMatch", chunkId: chunk.id } : { type: "cloze", chunkId: chunk.id, selectedIndexes: [] };
+  const modal = availableSourceIntentsForChunk(chunk).length
+    ? { type: "sourceIntentMatch", chunkId: chunk.id, createdChunkId: chunk.id }
+    : { type: "cloze", chunkId: chunk.id, createdChunkId: chunk.id, selectedIndexes: [] };
   setState({
     chunks: [...state.chunks, chunk],
     modal,
@@ -2328,8 +2330,24 @@ function matchSourceIntentAndOpenCloze(sourceIntentId) {
   const chunkId = state.modal.chunkId;
   setState({
     chunks: state.chunks.map((chunk) => (chunk.id === chunkId ? { ...chunk, sourceIntentId } : chunk)),
-    modal: { type: "cloze", chunkId, selectedIndexes: [] },
+    modal: { type: "cloze", chunkId, createdChunkId: state.modal.createdChunkId || "", selectedIndexes: [] },
   });
+}
+
+function closeModal() {
+  const modal = state.modal;
+  if (!modal) return;
+  const createdChunkId = modal.type === "cloze" || modal.type === "sourceIntentMatch" ? modal.createdChunkId : "";
+  if (createdChunkId) {
+    setState({
+      chunks: state.chunks.filter((item) => item.id !== createdChunkId),
+      cards: state.cards.filter((item) => item.chunkId !== createdChunkId),
+      modal: null,
+      lastCardUndo: state.lastCardUndo?.chunkId === createdChunkId ? null : state.lastCardUndo,
+    });
+    return;
+  }
+  setState({ modal: modal.returnModal || null });
 }
 
 function toggleToken(index) {
@@ -2358,6 +2376,7 @@ function saveCard(form) {
     focusNote: form.get("focusNote").trim(),
     priority: form.get("priority") === "important" ? "important" : "normal",
     selectedIndexes: state.modal.selectedIndexes || [],
+    removeChunkOnUndo: state.modal.createdChunkId === chunk?.id,
   });
 }
 
@@ -2378,10 +2397,11 @@ function saveCardFromTokenIndexes(indexes) {
     focusNote: "",
     priority: "normal",
     selectedIndexes,
+    removeChunkOnUndo: state.modal.createdChunkId === chunk.id,
   });
 }
 
-function saveCardData({ chunk, sourceIntentId, clozeText, maskedChunk, answer, focusNote, priority, selectedIndexes = [] }) {
+function saveCardData({ chunk, sourceIntentId, clozeText, maskedChunk, answer, focusNote, priority, selectedIndexes = [], removeChunkOnUndo = false }) {
   if (!chunk || !answer) return;
   const card = {
     id: uid("card"),
@@ -2413,6 +2433,7 @@ function saveCardData({ chunk, sourceIntentId, clozeText, maskedChunk, answer, f
       chunkId: chunk.id,
       previousSourceIntentId: chunk.sourceIntentId || "",
       selectedIndexes,
+      removeChunkOnUndo,
     },
   });
 }
@@ -2420,11 +2441,12 @@ function saveCardData({ chunk, sourceIntentId, clozeText, maskedChunk, answer, f
 function undoLastCreatedCard() {
   const undo = state.lastCardUndo;
   if (!undo) return;
-  const chunkExists = state.chunks.some((item) => item.id === undo.chunkId);
   setState({
     cards: state.cards.filter((item) => item.id !== undo.cardId),
-    chunks: state.chunks.map((item) => (item.id === undo.chunkId ? { ...item, sourceIntentId: undo.previousSourceIntentId || "" } : item)),
-    modal: chunkExists ? { type: "cloze", chunkId: undo.chunkId, selectedIndexes: undo.selectedIndexes || [] } : null,
+    chunks: undo.removeChunkOnUndo
+      ? state.chunks.filter((item) => item.id !== undo.chunkId)
+      : state.chunks.map((item) => (item.id === undo.chunkId ? { ...item, sourceIntentId: undo.previousSourceIntentId || "" } : item)),
+    modal: null,
     lastCardUndo: null,
   });
 }
