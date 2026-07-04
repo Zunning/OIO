@@ -354,8 +354,9 @@ function promptFor(style, original = "", settingsOverride = {}) {
   const templateStyle = templateStyleFor(settings, style);
   const template = PROMPT_TEMPLATES[templateStyle] || PROMPT_TEMPLATES.dialogue;
   const text = template.text
+    .replace("Output must follow this exact format:", "Output must be placed inside one plain text code block, and the content inside that code block must follow this exact format:")
     .replace("tags: Generate 2-4 short tags in English, separated by commas.", "tags:")
-    .replace("Do not include any extra explanations outside the :::OIO block.", `${promptConstraints(settings)}\n\nDo not include any extra explanations outside the :::OIO block.`);
+    .replace("Do not include any extra explanations outside the :::OIO block.", `${promptConstraints(settings)}\n\nDo not include explanations before or after the code block. The code block should contain only the :::OIO block.`);
   if (!original.trim()) return text;
   return `${text}\n\nMy original message:\n${original.trim()}`;
 }
@@ -1654,13 +1655,17 @@ function renderTextModal() {
                 </select>
               </label>
               <label>AI 输出
-                <textarea id="aiOutputPaste" placeholder="把 ChatGPT 输出的 :::OIO ... ::: 粘贴到这里"></textarea>
+                <textarea id="aiOutputPaste" placeholder="把 ChatGPT 输出的 :::OIO ... ::: 粘贴到这里">${escapeHtml(state.modal.aiOutputPaste || "")}</textarea>
               </label>
             </div>
             <div class="level-note">${escapeHtml(promptSummary(modalSettings))}</div>
             <div class="toolbar" style="margin-top: 12px;">
               <button type="button" data-copy-modal-prompt>复制提示词 + 原始输入</button>
               <button type="button" class="secondary" data-parse-ai-output>自动解析</button>
+              <label class="checkbox-line">
+                <input type="checkbox" id="autoSaveAfterParse" ${state.modal.autoSaveAfterParse ? "checked" : ""} />
+                <span>解析后自动保存</span>
+              </label>
             </div>
             ${state.modal.parseMessage ? `<p class="subtle">${escapeHtml(state.modal.parseMessage)}</p>` : ""}
           </div>
@@ -1801,7 +1806,7 @@ function renderClozeModal() {
         <div class="grid">
           <div class="muted-box">
             <p><strong>${escapeHtml(chunk.selectedText)}</strong></p>
-            <p class="subtle">chunk 已高亮保存。点击要挖空的词，建议一次只测一个表达点。</p>
+            <p class="subtle">chunk 已高亮保存。点击选择词，双击直接保存，Ctrl+Z 撤销上一步选择。</p>
           </div>
           <div class="token-list">
             ${tokens
@@ -1982,6 +1987,12 @@ function handleLiveInput(event) {
   if (event.target.id === "reviewSessionSize") {
     setState({ reviewSettings: { ...reviewSettings(), sessionSize: Number(event.target.value) || 7 } });
   }
+  if (event.target.id === "autoSaveAfterParse") {
+    setState({ modal: { ...state.modal, autoSaveAfterParse: event.target.checked, parseMessage: "" } });
+  }
+  if (event.target.id === "aiOutputPaste") {
+    state = { ...state, modal: { ...state.modal, aiOutputPaste: event.target.value, parseMessage: "" } };
+  }
   if (event.target.id === "exportFormat") {
     setState({ exportOptions: { ...exportOptions(), format: event.target.value }, exportMessage: "", exportPreview: "" });
   }
@@ -2031,6 +2042,15 @@ document.addEventListener("submit", async (event) => {
 });
 
 document.addEventListener("keydown", (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z" && state.modal?.type === "cloze") {
+    const activeTag = document.activeElement?.tagName?.toLowerCase();
+    if (!["input", "textarea", "select"].includes(activeTag)) {
+      event.preventDefault();
+      undoClozeSelection();
+    }
+    return;
+  }
+
   if (event.key === "Enter" && state.modal?.type === "sourceIntent") {
     const activeTag = document.activeElement?.tagName?.toLowerCase();
     if (["input", "textarea", "select", "button"].includes(activeTag)) return;
@@ -2117,8 +2137,8 @@ async function copyModalPrompt() {
   }
 }
 
-function parseAiOutputIntoTextForm() {
-  const raw = document.querySelector("#aiOutputPaste")?.value || "";
+async function parseAiOutputIntoTextForm() {
+  const raw = document.querySelector("#aiOutputPaste")?.value || state.modal.aiOutputPaste || "";
   const parsed = parseOioBlock(raw);
   if (!parsed) {
     setState({ modal: { ...state.modal, parseMessage: "没有识别到 :::OIO 格式。请检查 AI 输出。" } });
@@ -2126,27 +2146,27 @@ function parseAiOutputIntoTextForm() {
   }
   const currentForm = document.querySelector("#textForm");
   const textType = parsed.style && currentForm?.elements.textType.querySelector(`option[value="${parsed.style}"]`) ? parsed.style : state.modal.textType || state.modal.promptStyle || "dialogue";
-  setState({
-    modal: {
-      ...state.modal,
-      title: parsed.title || currentForm?.elements.title.value || state.modal.title || "",
-      originalText: parsed.original || currentForm?.elements.originalText.value || state.modal.originalText || "",
-      rewrittenText: parsed.rewrite || currentForm?.elements.rewrittenText.value || state.modal.rewrittenText || "",
-      translation: parsed.translation || currentForm?.elements.translation.value || state.modal.translation || "",
-      note: parsed.translation || currentForm?.elements.note.value || state.modal.note || "",
-      textType,
-      promptStyle: parsed.style || state.modal.promptStyle || "dialogue",
-      parseMessage: "已解析并填入表单，检查一下再保存。",
-    },
-  });
+  const nextModal = {
+    ...state.modal,
+    title: parsed.title || currentForm?.elements.title.value || state.modal.title || "",
+    originalText: parsed.original || currentForm?.elements.originalText.value || state.modal.originalText || "",
+    rewrittenText: parsed.rewrite || currentForm?.elements.rewrittenText.value || state.modal.rewrittenText || "",
+    translation: parsed.translation || currentForm?.elements.translation.value || state.modal.translation || "",
+    note: parsed.translation || currentForm?.elements.note.value || state.modal.note || "",
+    textType,
+    promptStyle: parsed.style || state.modal.promptStyle || "dialogue",
+    parseMessage: "已解析并填入表单，检查一下再保存。",
+  };
+  if (nextModal.autoSaveAfterParse) {
+    await saveTextFromModal(nextModal);
+    return;
+  }
+  setState({ modal: nextModal });
 }
 
 async function saveText(form) {
-  const id = state.modal.id || uid("text");
-  const existing = state.texts.find((item) => item.id === id);
-  const pendingImages = state.modal.pendingImages || [];
-  const item = {
-    id,
+  const modal = state.modal;
+  const values = {
     title: form.get("title").trim(),
     originalText: form.get("originalText").trim(),
     rewrittenText: form.get("rewrittenText").trim(),
@@ -2155,6 +2175,35 @@ async function saveText(form) {
     tags: splitTags(form.get("tags")),
     textType: form.get("textType") || "dialogue",
     sourceDate: form.get("sourceDate") || todayDate(),
+  };
+  await saveTextValues(values, modal);
+}
+
+async function saveTextFromModal(modal) {
+  const values = {
+    title: String(modal.title || "").trim(),
+    originalText: String(modal.originalText || "").trim(),
+    rewrittenText: String(modal.rewrittenText || "").trim(),
+    translation: String(modal.translation || "").trim(),
+    note: String(modal.note || "").trim(),
+    tags: splitTags(modal.tags || ""),
+    textType: modal.textType || "dialogue",
+    sourceDate: modal.sourceDate || todayDate(),
+  };
+  if (!values.title || !values.rewrittenText) {
+    setState({ modal: { ...modal, parseMessage: "解析成功，但缺少标题或英文改写，已填入表单请检查。" } });
+    return;
+  }
+  await saveTextValues(values, modal);
+}
+
+async function saveTextValues(values, modal) {
+  const id = modal.id || uid("text");
+  const existing = state.texts.find((item) => item.id === id);
+  const pendingImages = modal.pendingImages || [];
+  const item = {
+    id,
+    ...values,
     createdAt: existing?.createdAt || nowIso(),
     updatedAt: nowIso(),
   };
@@ -2274,7 +2323,15 @@ function toggleToken(index) {
   if (!state.modal || state.modal.type !== "cloze") return;
   const selected = state.modal.selectedIndexes || [];
   const next = selected.includes(index) ? selected.filter((item) => item !== index) : [...selected, index].sort((a, b) => a - b);
-  setState({ modal: { ...state.modal, selectedIndexes: next } });
+  setState({ modal: { ...state.modal, selectedIndexes: next, selectedHistory: [...(state.modal.selectedHistory || []), selected] } });
+}
+
+function undoClozeSelection() {
+  if (!state.modal || state.modal.type !== "cloze") return;
+  const history = state.modal.selectedHistory || [];
+  if (!history.length) return;
+  const previous = history[history.length - 1];
+  setState({ modal: { ...state.modal, selectedIndexes: previous, selectedHistory: history.slice(0, -1) } });
 }
 
 function saveCard(form) {
