@@ -33,6 +33,7 @@ const initialState = {
   promptEmoji: "allow",
   promptDraft: "",
   promptCopied: "",
+  autoSaveAfterParse: false,
   exportTextIds: [],
   exportOptions: {
     format: "markdown",
@@ -1663,7 +1664,7 @@ function renderTextModal() {
               <button type="button" data-copy-modal-prompt>复制提示词 + 原始输入</button>
               <button type="button" class="secondary" data-parse-ai-output>自动解析</button>
               <label class="checkbox-line">
-                <input type="checkbox" id="autoSaveAfterParse" ${state.modal.autoSaveAfterParse ? "checked" : ""} />
+                <input type="checkbox" id="autoSaveAfterParse" ${state.autoSaveAfterParse ? "checked" : ""} />
                 <span>解析后自动保存</span>
               </label>
             </div>
@@ -1988,7 +1989,7 @@ function handleLiveInput(event) {
     setState({ reviewSettings: { ...reviewSettings(), sessionSize: Number(event.target.value) || 7 } });
   }
   if (event.target.id === "autoSaveAfterParse") {
-    setState({ modal: { ...state.modal, autoSaveAfterParse: event.target.checked, parseMessage: "" } });
+    setState({ autoSaveAfterParse: event.target.checked, modal: { ...state.modal, parseMessage: "" } });
   }
   if (event.target.id === "aiOutputPaste") {
     state = { ...state, modal: { ...state.modal, aiOutputPaste: event.target.value, parseMessage: "" } };
@@ -2157,7 +2158,7 @@ async function parseAiOutputIntoTextForm() {
     promptStyle: parsed.style || state.modal.promptStyle || "dialogue",
     parseMessage: "已解析并填入表单，检查一下再保存。",
   };
-  if (nextModal.autoSaveAfterParse) {
+  if (state.autoSaveAfterParse) {
     await saveTextFromModal(nextModal);
     return;
   }
